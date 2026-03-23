@@ -6,10 +6,10 @@ resolver = "2"
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.88"
-authors = ["Haythem Sellami - Category Labs <hsellami@category.xyz>"]
+authors = [""]
 license = "MIT"
-repository = "https://github.com/category-labs/monad-revm"
-documentation = "https://docs.rs/monad-revm"
+repository = "https://github.com/GlobalSettlementNetwork/gsx-revm"
+documentation = "https://docs.rs/gsx-revm"
 categories = ["cryptography::cryptocurrencies"]
 
 [workspace.lints.rust]
@@ -26,7 +26,7 @@ use-self = "warn"
 redundant-clone = "warn"
 
 [workspace.dependencies]
-monad-revm = { version = "0.2.0", path = "crates/monad-revm", default-features = false }
+gsx-revm = { version = "0.2.0", path = "crates/gsx-revm", default-features = false }
 
 # revm
 revm = { version = "34.0.0", default-features = false }

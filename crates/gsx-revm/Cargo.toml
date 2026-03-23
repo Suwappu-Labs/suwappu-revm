@@ -1,6 +1,6 @@
 [package]
-name = "monad-revm"
-description = "Monad-specific REVM implementation"
+name = "gsx-revm"
+description = "Gsx-specific REVM implementation"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 documentation.workspace = true
 categories.workspace = true
 rust-version.workspace = true
-keywords = ["monad", "evm", "revm", "ethereum", "blockchain"]
+keywords = ["gsx", "evm", "revm", "ethereum", "blockchain"]
 readme = "../../README.md"
 
 [lints]

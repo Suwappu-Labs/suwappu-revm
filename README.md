@@ -1,4 +1,4 @@
-# GSX REVM
+# Suwappu REVM
 
 [![Crates.io](https://img.shields.io/crates/v/monad-revm.svg)](https://crates.io/crates/monad-revm)
 [![Documentation](https://docs.rs/monad-revm/badge.svg)](https://docs.rs/monad-revm)

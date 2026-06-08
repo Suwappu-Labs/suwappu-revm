@@ -177,6 +177,29 @@ fn monad_point_evaluation_run(input: &[u8], gas_limit: u64) -> PrecompileResult 
     Ok(PrecompileOutput::new(MONAD_POINT_EVALUATION_GAS, kzg_point_evaluation::RETURN_VALUE.into()))
 }
 
+/// Suwappu DAG ML-DSA-65 (FIPS 204) verify precompile gas cost. Native verify;
+/// priced ~12k — heavier than EIP-8051's 4,500 for ML-DSA-44, with a DoS-underprice
+/// margin (P5b proposes 8–12k). Benchmark + tighten before mainnet.
+pub const SUWAPPU_MLDSA65_VERIFY_GAS: u64 = 12_000;
+
+/// Suwappu DAG ML-DSA-65 verify precompile run function (address 0x0101).
+///
+/// Input  = pubkey(1952) || signature(3309) || message  (tight, no padding).
+/// Output = 32-byte word, last byte 1 iff the ML-DSA-65 signature is valid.
+///
+/// Delegates to the in-tree `suwappu_mldsa_precompile::verify`, which never
+/// panics: any malformed input (short, bad key/sig encoding, invalid signature)
+/// maps to the false word. This is the on-chain post-quantum trust anchor (P5b):
+/// it lets mint/unlock/finalize require a real FIPS-204 signature, with no SNARK
+/// wrapper and no scheme substitution.
+fn suwappu_mldsa65_verify_run(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    if SUWAPPU_MLDSA65_VERIFY_GAS > gas_limit {
+        return Err(PrecompileError::OutOfGas);
+    }
+    let out = suwappu_mldsa_precompile::verify(input);
+    Ok(PrecompileOutput::new(SUWAPPU_MLDSA65_VERIFY_GAS, Bytes::from(out.to_vec())))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Monad Precompile Constants
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -244,6 +267,13 @@ impl MonadPrecompiles {
         // Add P256VERIFY precompile (RIP-7212 / EIP-7951)
         // Address: 0x0100, Gas: 3450 (same as Ethereum pre-Osaka)
         precompiles.extend([secp256r1::P256VERIFY]);
+
+        // P5b: native ML-DSA-65 (FIPS 204) post-quantum verify precompile at 0x0101.
+        precompiles.extend([Precompile::new(
+            PrecompileId::custom("MLDSA65_VERIFY"),
+            revm::precompile::u64_to_address(0x0101),
+            suwappu_mldsa65_verify_run,
+        )]);
 
         Self {
             inner: EthPrecompiles {
@@ -636,6 +666,51 @@ mod tests {
             revm::precompile::secp256r1::P256VERIFY_BASE_GAS_FEE,
             "P256VERIFY should use Ethereum gas cost of 3450"
         );
+    }
+
+    #[test]
+    fn test_mldsa65_precompile_registered() {
+        let monad_precompiles = MonadPrecompiles::default();
+        assert!(
+            monad_precompiles.precompiles().contains(&revm::precompile::u64_to_address(0x0101)),
+            "ML-DSA-65 verify (0x0101) should exist"
+        );
+    }
+
+    #[test]
+    fn test_mldsa65_precompile_verifies_real_signature() {
+        use pqcrypto_mldsa::mldsa65;
+        use pqcrypto_traits::sign::{DetachedSignature as _, PublicKey as _};
+
+        let monad_precompiles = MonadPrecompiles::default();
+        let precompiles = monad_precompiles.precompiles();
+        let precompile = precompiles
+            .get(&revm::precompile::u64_to_address(0x0101))
+            .expect("ML-DSA-65 precompile (0x0101) should exist");
+
+        // Real FIPS-204 keypair + detached signature.
+        let (pk, sk) = mldsa65::keypair();
+        let message = b"suwappu on-chain PQ: 0x0101 registration test";
+        let sig = mldsa65::detached_sign(message, &sk);
+
+        // input = pubkey(1952) || signature(3309) || message
+        let mut input = Vec::new();
+        input.extend_from_slice(pk.as_bytes());
+        input.extend_from_slice(sig.as_bytes());
+        input.extend_from_slice(message);
+
+        let result = precompile.execute(&input, 100_000).expect("precompile should run");
+        assert_eq!(result.gas_used, SUWAPPU_MLDSA65_VERIFY_GAS, "priced at the P5b gas");
+        assert_eq!(result.bytes.last().copied(), Some(1u8), "valid ML-DSA-65 sig -> true word");
+
+        // Tampered message -> false word (precompile never panics).
+        let mut tampered = input.clone();
+        *tampered.last_mut().unwrap() ^= 0xff;
+        let bad = precompile.execute(&tampered, 100_000).expect("precompile should run");
+        assert_eq!(bad.bytes.last().copied(), Some(0u8), "tampered message -> false word");
+
+        // Under-gassed -> OutOfGas.
+        assert!(precompile.execute(&input, SUWAPPU_MLDSA65_VERIFY_GAS - 1).is_err(), "under-gas reverts");
     }
 
     #[test]

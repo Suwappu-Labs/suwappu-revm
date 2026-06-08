@@ -200,6 +200,29 @@ fn suwappu_mldsa65_verify_run(input: &[u8], gas_limit: u64) -> PrecompileResult 
     Ok(PrecompileOutput::new(SUWAPPU_MLDSA65_VERIFY_GAS, Bytes::from(out.to_vec())))
 }
 
+/// BLAKE3 precompile base gas.
+pub const SUWAPPU_BLAKE3_BASE_GAS: u64 = 30;
+/// BLAKE3 precompile per-32-byte-word gas (BLAKE3 is faster than SHA-256, whose
+/// EVM word cost is 12; priced conservatively, benchmark + tighten before mainnet).
+pub const SUWAPPU_BLAKE3_WORD_GAS: u64 = 6;
+
+/// BLAKE3 hash precompile run function (address 0x0102).
+///
+/// Output = the 32-byte BLAKE3 hash of the input. GSX-DAG hashes its consensus
+/// certificate / vote pre-images with BLAKE3, so an on-chain consensus verifier
+/// must recompute those digests before ML-DSA-verifying the signatures (the EVM
+/// exposes KECCAK256 but not BLAKE3). Standard unkeyed BLAKE3, byte-identical to
+/// the off-chain `blake3::hash` used in suwappu-crypto.
+fn suwappu_blake3_run(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    let words = (input.len() as u64).div_ceil(32);
+    let gas_used = SUWAPPU_BLAKE3_BASE_GAS + SUWAPPU_BLAKE3_WORD_GAS * words;
+    if gas_used > gas_limit {
+        return Err(PrecompileError::OutOfGas);
+    }
+    let hash = blake3::hash(input);
+    Ok(PrecompileOutput::new(gas_used, Bytes::from(hash.as_bytes().to_vec())))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Monad Precompile Constants
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -273,6 +296,13 @@ impl MonadPrecompiles {
             PrecompileId::custom("MLDSA65_VERIFY"),
             revm::precompile::u64_to_address(0x0101),
             suwappu_mldsa65_verify_run,
+        )]);
+
+        // BLAKE3 hash precompile at 0x0102 (GSX-DAG consensus cert/vote digests).
+        precompiles.extend([Precompile::new(
+            PrecompileId::custom("BLAKE3"),
+            revm::precompile::u64_to_address(0x0102),
+            suwappu_blake3_run,
         )]);
 
         Self {
@@ -711,6 +741,37 @@ mod tests {
 
         // Under-gassed -> OutOfGas.
         assert!(precompile.execute(&input, SUWAPPU_MLDSA65_VERIFY_GAS - 1).is_err(), "under-gas reverts");
+    }
+
+    #[test]
+    fn test_blake3_precompile() {
+        use revm::primitives::hex;
+
+        let monad_precompiles = MonadPrecompiles::default();
+        let precompiles = monad_precompiles.precompiles();
+        let precompile = precompiles
+            .get(&revm::precompile::u64_to_address(0x0102))
+            .expect("BLAKE3 precompile (0x0102) should exist");
+
+        // Official BLAKE3 test vectors.
+        let r0 = precompile.execute(b"", 1_000).expect("run");
+        assert_eq!(
+            hex::encode(r0.bytes.as_ref()),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+            "BLAKE3(\"\")"
+        );
+        assert_eq!(r0.gas_used, SUWAPPU_BLAKE3_BASE_GAS);
+
+        let r1 = precompile.execute(b"abc", 1_000).expect("run");
+        assert_eq!(
+            hex::encode(r1.bytes.as_ref()),
+            "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
+            "BLAKE3(\"abc\")"
+        );
+        assert_eq!(r1.gas_used, SUWAPPU_BLAKE3_BASE_GAS + SUWAPPU_BLAKE3_WORD_GAS); // 3 bytes = 1 word
+
+        // under-gas: 100 bytes = 4 words => 30 + 24 = 54 gas; supplying 30 reverts.
+        assert!(precompile.execute(&[0u8; 100], SUWAPPU_BLAKE3_BASE_GAS).is_err(), "under-gas reverts");
     }
 
     #[test]

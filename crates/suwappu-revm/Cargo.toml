@@ -30,6 +30,11 @@ alloy-sol-types.workspace = true
 # token auth, same pattern as the suwappu-db state-substrate dependency.
 suwappu-mldsa-precompile = { path = "../../../gsx-dag/crates/suwappu-mldsa-precompile" }
 
+# BLAKE3 (0x0102 precompile): the hash GSX-DAG uses for consensus certificate /
+# vote digests — needed on-chain so a consensus verifier can recompute a cert
+# digest before ML-DSA-verifying it (the EVM has no BLAKE3 opcode).
+blake3 = { version = "1", default-features = false }
+
 # Optional
 serde = { workspace = true, optional = true }
 

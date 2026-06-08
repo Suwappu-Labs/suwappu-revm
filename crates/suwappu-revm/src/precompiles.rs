@@ -177,6 +177,52 @@ fn monad_point_evaluation_run(input: &[u8], gas_limit: u64) -> PrecompileResult 
     Ok(PrecompileOutput::new(MONAD_POINT_EVALUATION_GAS, kzg_point_evaluation::RETURN_VALUE.into()))
 }
 
+/// Suwappu DAG ML-DSA-65 (FIPS 204) verify precompile gas cost. Native verify;
+/// priced ~12k — heavier than EIP-8051's 4,500 for ML-DSA-44, with a DoS-underprice
+/// margin (P5b proposes 8–12k). Benchmark + tighten before mainnet.
+pub const SUWAPPU_MLDSA65_VERIFY_GAS: u64 = 12_000;
+
+/// Suwappu DAG ML-DSA-65 verify precompile run function (address 0x0101).
+///
+/// Input  = pubkey(1952) || signature(3309) || message  (tight, no padding).
+/// Output = 32-byte word, last byte 1 iff the ML-DSA-65 signature is valid.
+///
+/// Delegates to the in-tree `suwappu_mldsa_precompile::verify`, which never
+/// panics: any malformed input (short, bad key/sig encoding, invalid signature)
+/// maps to the false word. This is the on-chain post-quantum trust anchor (P5b):
+/// it lets mint/unlock/finalize require a real FIPS-204 signature, with no SNARK
+/// wrapper and no scheme substitution.
+fn suwappu_mldsa65_verify_run(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    if SUWAPPU_MLDSA65_VERIFY_GAS > gas_limit {
+        return Err(PrecompileError::OutOfGas);
+    }
+    let out = suwappu_mldsa_precompile::verify(input);
+    Ok(PrecompileOutput::new(SUWAPPU_MLDSA65_VERIFY_GAS, Bytes::from(out.to_vec())))
+}
+
+/// BLAKE3 precompile base gas.
+pub const SUWAPPU_BLAKE3_BASE_GAS: u64 = 30;
+/// BLAKE3 precompile per-32-byte-word gas (BLAKE3 is faster than SHA-256, whose
+/// EVM word cost is 12; priced conservatively, benchmark + tighten before mainnet).
+pub const SUWAPPU_BLAKE3_WORD_GAS: u64 = 6;
+
+/// BLAKE3 hash precompile run function (address 0x0102).
+///
+/// Output = the 32-byte BLAKE3 hash of the input. GSX-DAG hashes its consensus
+/// certificate / vote pre-images with BLAKE3, so an on-chain consensus verifier
+/// must recompute those digests before ML-DSA-verifying the signatures (the EVM
+/// exposes KECCAK256 but not BLAKE3). Standard unkeyed BLAKE3, byte-identical to
+/// the off-chain `blake3::hash` used in suwappu-crypto.
+fn suwappu_blake3_run(input: &[u8], gas_limit: u64) -> PrecompileResult {
+    let words = (input.len() as u64).div_ceil(32);
+    let gas_used = SUWAPPU_BLAKE3_BASE_GAS + SUWAPPU_BLAKE3_WORD_GAS * words;
+    if gas_used > gas_limit {
+        return Err(PrecompileError::OutOfGas);
+    }
+    let hash = blake3::hash(input);
+    Ok(PrecompileOutput::new(gas_used, Bytes::from(hash.as_bytes().to_vec())))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // Monad Precompile Constants
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -244,6 +290,20 @@ impl MonadPrecompiles {
         // Add P256VERIFY precompile (RIP-7212 / EIP-7951)
         // Address: 0x0100, Gas: 3450 (same as Ethereum pre-Osaka)
         precompiles.extend([secp256r1::P256VERIFY]);
+
+        // P5b: native ML-DSA-65 (FIPS 204) post-quantum verify precompile at 0x0101.
+        precompiles.extend([Precompile::new(
+            PrecompileId::custom("MLDSA65_VERIFY"),
+            revm::precompile::u64_to_address(0x0101),
+            suwappu_mldsa65_verify_run,
+        )]);
+
+        // BLAKE3 hash precompile at 0x0102 (GSX-DAG consensus cert/vote digests).
+        precompiles.extend([Precompile::new(
+            PrecompileId::custom("BLAKE3"),
+            revm::precompile::u64_to_address(0x0102),
+            suwappu_blake3_run,
+        )]);
 
         Self {
             inner: EthPrecompiles {
@@ -636,6 +696,82 @@ mod tests {
             revm::precompile::secp256r1::P256VERIFY_BASE_GAS_FEE,
             "P256VERIFY should use Ethereum gas cost of 3450"
         );
+    }
+
+    #[test]
+    fn test_mldsa65_precompile_registered() {
+        let monad_precompiles = MonadPrecompiles::default();
+        assert!(
+            monad_precompiles.precompiles().contains(&revm::precompile::u64_to_address(0x0101)),
+            "ML-DSA-65 verify (0x0101) should exist"
+        );
+    }
+
+    #[test]
+    fn test_mldsa65_precompile_verifies_real_signature() {
+        use pqcrypto_mldsa::mldsa65;
+        use pqcrypto_traits::sign::{DetachedSignature as _, PublicKey as _};
+
+        let monad_precompiles = MonadPrecompiles::default();
+        let precompiles = monad_precompiles.precompiles();
+        let precompile = precompiles
+            .get(&revm::precompile::u64_to_address(0x0101))
+            .expect("ML-DSA-65 precompile (0x0101) should exist");
+
+        // Real FIPS-204 keypair + detached signature.
+        let (pk, sk) = mldsa65::keypair();
+        let message = b"suwappu on-chain PQ: 0x0101 registration test";
+        let sig = mldsa65::detached_sign(message, &sk);
+
+        // input = pubkey(1952) || signature(3309) || message
+        let mut input = Vec::new();
+        input.extend_from_slice(pk.as_bytes());
+        input.extend_from_slice(sig.as_bytes());
+        input.extend_from_slice(message);
+
+        let result = precompile.execute(&input, 100_000).expect("precompile should run");
+        assert_eq!(result.gas_used, SUWAPPU_MLDSA65_VERIFY_GAS, "priced at the P5b gas");
+        assert_eq!(result.bytes.last().copied(), Some(1u8), "valid ML-DSA-65 sig -> true word");
+
+        // Tampered message -> false word (precompile never panics).
+        let mut tampered = input.clone();
+        *tampered.last_mut().unwrap() ^= 0xff;
+        let bad = precompile.execute(&tampered, 100_000).expect("precompile should run");
+        assert_eq!(bad.bytes.last().copied(), Some(0u8), "tampered message -> false word");
+
+        // Under-gassed -> OutOfGas.
+        assert!(precompile.execute(&input, SUWAPPU_MLDSA65_VERIFY_GAS - 1).is_err(), "under-gas reverts");
+    }
+
+    #[test]
+    fn test_blake3_precompile() {
+        use revm::primitives::hex;
+
+        let monad_precompiles = MonadPrecompiles::default();
+        let precompiles = monad_precompiles.precompiles();
+        let precompile = precompiles
+            .get(&revm::precompile::u64_to_address(0x0102))
+            .expect("BLAKE3 precompile (0x0102) should exist");
+
+        // Official BLAKE3 test vectors.
+        let r0 = precompile.execute(b"", 1_000).expect("run");
+        assert_eq!(
+            hex::encode(r0.bytes.as_ref()),
+            "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262",
+            "BLAKE3(\"\")"
+        );
+        assert_eq!(r0.gas_used, SUWAPPU_BLAKE3_BASE_GAS);
+
+        let r1 = precompile.execute(b"abc", 1_000).expect("run");
+        assert_eq!(
+            hex::encode(r1.bytes.as_ref()),
+            "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
+            "BLAKE3(\"abc\")"
+        );
+        assert_eq!(r1.gas_used, SUWAPPU_BLAKE3_BASE_GAS + SUWAPPU_BLAKE3_WORD_GAS); // 3 bytes = 1 word
+
+        // under-gas: 100 bytes = 4 words => 30 + 24 = 54 gas; supplying 30 reverts.
+        assert!(precompile.execute(&[0u8; 100], SUWAPPU_BLAKE3_BASE_GAS).is_err(), "under-gas reverts");
     }
 
     #[test]

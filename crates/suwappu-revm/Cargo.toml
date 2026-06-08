@@ -24,11 +24,25 @@ auto_impl.workspace = true
 # alloy
 alloy-sol-types.workspace = true
 
+# Suwappu DAG on-chain PQ: native ML-DSA-65 (FIPS 204) verifier wired in as the
+# 0x0101 precompile (P5b). Path dep for local builds (gsx-dag as a sibling
+# checkout); production/CI should pin the git dep on Suwappu-Labs/suwappu-dag with
+# token auth, same pattern as the suwappu-db state-substrate dependency.
+suwappu-mldsa-precompile = { path = "../../../gsx-dag/crates/suwappu-mldsa-precompile" }
+
+# BLAKE3 (0x0102 precompile): the hash GSX-DAG uses for consensus certificate /
+# vote digests — needed on-chain so a consensus verifier can recompute a cert
+# digest before ML-DSA-verifying it (the EVM has no BLAKE3 opcode).
+blake3 = { version = "1", default-features = false }
+
 # Optional
 serde = { workspace = true, optional = true }
 
 [dev-dependencies]
 rstest.workspace = true
+# Real ML-DSA-65 keygen/sign for the 0x0101 precompile functional test.
+pqcrypto-mldsa = "0.1"
+pqcrypto-traits = "0.3"
 
 [features]
 default = ["std", "c-kzg", "secp256k1", "portable", "blst", "optional_no_base_fee", "memory_limit"]

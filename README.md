@@ -193,6 +193,81 @@ Error behavior matches the canonical Monad implementation:
 - Nonzero value: `"value is nonzero"`
 - Extra calldata beyond the selector: `"input is invalid"`
 
+## Suwappu bridge: destination PQ verifier
+
+`suwappu-revm` is the GSX-DAG EVM fork. In addition to the Monad-inherited
+execution semantics documented below, it registers two Suwappu-specific
+precompiles that are the destination-side verifier for the Suwappu cross-chain
+bridge:
+
+| Address | Precompile | Purpose |
+|---------|-----------|---------|
+| `0x0101` | ML-DSA-65 verify (FIPS 204) | Verify each validator's bridge-header attestation signature |
+| `0x0102` | BLAKE3 hash | Recompute the 148-byte header preimage digest on-chain |
+
+### How it fits into the bridge
+
+The Suwappu bridge moves value from a source chain to a destination chain via
+validator-quorum side-attestations:
+
+1. On the source chain (gsx-dag): each validator signs a `HeaderAttestation`
+   over `BLAKE3(HEADER_DOMAIN || networkId || oracle || blockNumber || stateRoot)`.
+2. An off-chain relayer (liveness-trusted, cannot forge) collects attestations
+   until it holds a set whose stake exceeds the on-chain **>2/3** threshold.
+3. The relayer calls `GsxDagQuorumHeaderOracle.submitHeader`, which uses
+   `0x0102` to recompute the digest and `0x0101` to verify each ML-DSA-65
+   signature. Signers whose stake collectively exceed the threshold finalize
+   the header; otherwise the call reverts with `BelowQuorum`.
+
+### Trust model
+
+This is the **only configuration that is both trust-minimized AND
+post-quantum**:
+
+- The ML-DSA-65 (FIPS 204) signatures are verified natively via the `0x0101`
+  precompile — no SNARK wrapper, no scheme substitution. This is genuinely
+  post-quantum sound.
+- Safety rests on an honest **>2/3-stake** quorum of GSX-DAG validators. The
+  relayer cannot forge; it is liveness-trusted only.
+
+For comparison, the other verifier backends available on the Suwappu bridge are
+**NOT post-quantum**: BLS aggregate on stock EVMs (classical, exception zone)
+and hash-based PQ proof (in research, no deployed implementation).
+
+### The `pq_header_oracle_e2e` test
+
+`crates/suwappu-revm/tests/pq_header_oracle_e2e.rs` is the load-bearing proof
+that this path is real and non-vacuous:
+
+- Deploys real `GsxDagValidatorRegistry` + `GsxDagQuorumHeaderOracle` Solidity
+  contracts inside `suwappu-revm`.
+- Generates real ML-DSA-65 keypairs, signs a real 148-byte header digest.
+- Submits 3-of-4 honest signatures (300 stake >= 267 threshold): `submitHeader`
+  succeeds and `headerStateRoot` is written — **ACCEPT FINALIZES**.
+- One-byte-flipped signature drops that signer's stake (200 < 267): reverts
+  with `BelowQuorum(200, 267)` — **TAMPERED SIG REJECTED**.
+- 1-of-4 sigs (100 < 267): reverts with `BelowQuorum(100, 267)` — **SUB-QUORUM
+  REVERTS**.
+
+A green run on the accept path proves `0x0101` is present, returns `0x01` for a
+genuine ML-DSA-65 signature, and `0x0102` produces a digest matching the
+off-chain BLAKE3. If either precompile were missing or empty, every
+`submitHeader` would revert and the accept anchor would fail.
+
+### Flow
+
+```mermaid
+flowchart LR
+    Relayer["Off-chain relayer\n(liveness-trusted,\ncannot forge)"] --> Oracle["GsxDagQuorumHeaderOracle\nsubmitHeader(blockNumber,\nstateRoot, epoch,\npubkeys[], sigs[])"]
+    Oracle --> B3["0x0102 BLAKE3\nrecompute 148-byte preimage\n-> 32-byte digest"]
+    B3 --> MLDSA["0x0101 ML-DSA-65\nverify each sig\n(FIPS 204, native)"]
+    MLDSA --> Quorum{">2/3 stake\nverified?"}
+    Quorum -->|"yes -- accept"| Finalize["headerStateRoot[chainId][blockNumber]\n= stateRoot\n(finalized)"]
+    Quorum -->|"no -- revert"| Reject["BelowQuorum revert\n(no state written)"]
+```
+
+---
+
 ## Installation
 
 Add to your `Cargo.toml`:

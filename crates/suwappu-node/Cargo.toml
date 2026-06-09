@@ -72,3 +72,8 @@ tokio = { version = "1", features = ["full"] }
 serde_json = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 hex = { version = "0.4", default-features = false, features = ["std"] }
+# For destination_live test: ML-DSA-65 keygen/sign + ABI encoding + BLAKE3 digest.
+alloy-sol-types = { version = "1.5", default-features = false, features = ["std"] }
+pqcrypto-mldsa = "0.1"
+pqcrypto-traits = "0.3"
+blake3 = { version = "1", default-features = false }

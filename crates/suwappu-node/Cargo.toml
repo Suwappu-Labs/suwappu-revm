@@ -1,0 +1,74 @@
+[package]
+name = "suwappu-node"
+description = "Suwappu EVM dev node — instant-mine JSON-RPC node with ML-DSA-65 (0x0101) and BLAKE3 (0x0102) precompiles"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
+categories.workspace = true
+rust-version.workspace = true
+keywords = ["suwappu", "evm", "dev-node", "json-rpc", "ethereum"]
+
+[[bin]]
+name = "suwappu-node"
+path = "src/main.rs"
+
+[lib]
+name = "suwappu_node"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Suwappu EVM with MonadPrecompiles (0x0101 ML-DSA-65 + 0x0102 BLAKE3)
+suwappu-revm = { path = "../suwappu-revm", default-features = false, features = [
+    "std",
+    "secp256k1",
+    "optional_no_base_fee",
+    "optional_balance_check",
+    "optional_block_gas_limit",
+] }
+
+# revm types (re-exported by suwappu-revm but used directly here)
+revm = { version = "34.0.0", default-features = false, features = ["std"] }
+
+# HTTP server
+axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Transaction decoding: secp256k1 sender recovery + RLP decode
+alloy-consensus = { version = "0.14", default-features = false, features = ["std", "k256"] }
+alloy-primitives = { version = "1", default-features = false, features = ["std", "rlp", "k256"] }
+alloy-rlp = { version = "0.3", default-features = false, features = ["std"] }
+alloy-eips = { version = "0.14", default-features = false, features = ["std"] }
+
+# CLI args
+clap = { version = "4", features = ["derive"] }
+
+# Hex utilities
+hex = { version = "0.4", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+# For the smoke test: build + sign raw transactions using alloy-consensus + k256.
+# We deliberately avoid alloy-signer-local and alloy-network because their default
+# feature chain enables alloy-consensus/serde, which generates code referencing
+# serde::__private — removed in serde >=1.0.220 (workspace resolves to 1.0.228).
+alloy-consensus = { version = "0.14", default-features = false, features = ["std", "k256"] }
+alloy-primitives = { version = "1", default-features = false, features = ["std", "rlp", "k256"] }
+alloy-rlp = { version = "0.3", default-features = false, features = ["std"] }
+alloy-eips = { version = "0.14", default-features = false, features = ["std"] }
+# secp256k1 signing (k256) is already a transitive dep; pull it explicitly for test signing.
+k256 = { version = "0.13", default-features = false, features = ["std", "ecdsa", "pkcs8"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+hex = { version = "0.4", default-features = false, features = ["std"] }

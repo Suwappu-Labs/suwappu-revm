@@ -32,10 +32,10 @@
 //! `bytecode.object` of the real constructors, regenerated with:
 //!
 //! ```sh
-//! cd /Users/toma/gsx/gsx-lattice-protocol/contracts && forge build
+//! cd ~/suwappu-workspace/repos/suwappu-lattice-protocol/contracts && forge build
 //! # then, from contracts/out/<Name>.sol/<Name>.json, take .bytecode.object
 //! # (strip the 0x prefix) into
-//! # gsx-revm/crates/suwappu-revm/tests/fixtures/<Name>.creation.hex
+//! # suwappu-revm/crates/suwappu-revm/tests/fixtures/<Name>.creation.hex
 //! ```
 //!
 //! We deploy via CREATE transactions that run the real constructors (NOT
@@ -48,9 +48,9 @@
 //! `BLAKE3(HEADER_DOMAIN || networkId || oracleAddr || blockNumber || stateRoot)`
 //! with the exact `abi.encodePacked` layout (148 bytes). We replicate that
 //! 148-byte layout inline (using the `blake3` crate that suwappu-revm already
-//! direct-deps) rather than pulling in `gsx-consensus::bridge_header` as a
-//! dev-dep: that crate inherits the gsx-dag workspace (`*.workspace = true`)
-//! and pulls `gsx-crypto`, dragging the whole gsx-dag workspace into this
+//! direct-deps) rather than pulling in `suwappu-consensus::bridge_header` as a
+//! dev-dep: that crate inherits the suwappu-dag workspace (`*.workspace = true`)
+//! and pulls `suwappu-crypto`, dragging the whole suwappu-dag workspace into this
 //! crate's build. The inline layout is self-validating: a wrong digest makes
 //! the real ML-DSA verify fail, so the ACCEPT-FINALIZES anchor would not
 //! finalize. `HEADER_DOMAIN` is the hard-pinned `keccak256("SUWAPPU_GSXDAG_HEADER_V1")`.

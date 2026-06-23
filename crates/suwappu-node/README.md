@@ -17,7 +17,7 @@ does not have:
 | Address  | Precompile       | Purpose |
 |----------|------------------|---------|
 | `0x0101` | ML-DSA-65 verify | FIPS 204 post-quantum signature verification (P5b) |
-| `0x0102` | BLAKE3 hash      | GSX-DAG consensus certificate digest recomputation |
+| `0x0102` | BLAKE3 hash      | Suwappu-DAG consensus certificate digest recomputation |
 
 Solidity contracts that `staticcall` either of these addresses work
 correctly against this node. Any Solidity that runs on the real Suwappu chain

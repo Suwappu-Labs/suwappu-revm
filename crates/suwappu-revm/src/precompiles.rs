@@ -208,7 +208,7 @@ pub const SUWAPPU_BLAKE3_WORD_GAS: u64 = 6;
 
 /// BLAKE3 hash precompile run function (address 0x0102).
 ///
-/// Output = the 32-byte BLAKE3 hash of the input. GSX-DAG hashes its consensus
+/// Output = the 32-byte BLAKE3 hash of the input. Suwappu-DAG hashes its consensus
 /// certificate / vote pre-images with BLAKE3, so an on-chain consensus verifier
 /// must recompute those digests before ML-DSA-verifying the signatures (the EVM
 /// exposes KECCAK256 but not BLAKE3). Standard unkeyed BLAKE3, byte-identical to
@@ -298,7 +298,7 @@ impl MonadPrecompiles {
             suwappu_mldsa65_verify_run,
         )]);
 
-        // BLAKE3 hash precompile at 0x0102 (GSX-DAG consensus cert/vote digests).
+        // BLAKE3 hash precompile at 0x0102 (Suwappu-DAG consensus cert/vote digests).
         precompiles.extend([Precompile::new(
             PrecompileId::custom("BLAKE3"),
             revm::precompile::u64_to_address(0x0102),

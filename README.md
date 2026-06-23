@@ -195,7 +195,7 @@ Error behavior matches the canonical Monad implementation:
 
 ## Suwappu bridge: destination PQ verifier
 
-`suwappu-revm` is the GSX-DAG EVM fork. In addition to the Monad-inherited
+`suwappu-revm` is the Suwappu-DAG EVM fork. In addition to the Monad-inherited
 execution semantics documented below, it registers two Suwappu-specific
 precompiles that are the destination-side verifier for the Suwappu cross-chain
 bridge:
@@ -210,7 +210,7 @@ bridge:
 The Suwappu bridge moves value from a source chain to a destination chain via
 validator-quorum side-attestations:
 
-1. On the source chain (gsx-dag): each validator signs a `HeaderAttestation`
+1. On the source chain (suwappu-dag): each validator signs a `HeaderAttestation`
    over `BLAKE3(HEADER_DOMAIN || networkId || oracle || blockNumber || stateRoot)`.
 2. An off-chain relayer (liveness-trusted, cannot forge) collects attestations
    until it holds a set whose stake exceeds the on-chain **>2/3** threshold.
@@ -227,7 +227,7 @@ post-quantum**:
 - The ML-DSA-65 (FIPS 204) signatures are verified natively via the `0x0101`
   precompile — no SNARK wrapper, no scheme substitution. This is genuinely
   post-quantum sound.
-- Safety rests on an honest **>2/3-stake** quorum of GSX-DAG validators. The
+- Safety rests on an honest **>2/3-stake** quorum of Suwappu-DAG validators. The
   relayer cannot forge; it is liveness-trusted only.
 
 For comparison, the other verifier backends available on the Suwappu bridge are

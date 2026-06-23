@@ -30,7 +30,7 @@ alloy-sol-types.workspace = true
 # state-substrate dependency — builds from a clean checkout, no sibling dir needed.
 suwappu-mldsa-precompile = { git = "https://github.com/Suwappu-Labs/suwappu-dag.git", tag = "v0.3.0" }
 
-# BLAKE3 (0x0102 precompile): the hash GSX-DAG uses for consensus certificate /
+# BLAKE3 (0x0102 precompile): the hash Suwappu-DAG uses for consensus certificate /
 # vote digests — needed on-chain so a consensus verifier can recompute a cert
 # digest before ML-DSA-verifying it (the EVM has no BLAKE3 opcode).
 blake3 = { version = "1", default-features = false }

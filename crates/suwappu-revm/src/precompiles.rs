@@ -740,7 +740,10 @@ mod tests {
         assert_eq!(bad.bytes.last().copied(), Some(0u8), "tampered message -> false word");
 
         // Under-gassed -> OutOfGas.
-        assert!(precompile.execute(&input, SUWAPPU_MLDSA65_VERIFY_GAS - 1).is_err(), "under-gas reverts");
+        assert!(
+            precompile.execute(&input, SUWAPPU_MLDSA65_VERIFY_GAS - 1).is_err(),
+            "under-gas reverts"
+        );
     }
 
     #[test]
@@ -771,7 +774,10 @@ mod tests {
         assert_eq!(r1.gas_used, SUWAPPU_BLAKE3_BASE_GAS + SUWAPPU_BLAKE3_WORD_GAS); // 3 bytes = 1 word
 
         // under-gas: 100 bytes = 4 words => 30 + 24 = 54 gas; supplying 30 reverts.
-        assert!(precompile.execute(&[0u8; 100], SUWAPPU_BLAKE3_BASE_GAS).is_err(), "under-gas reverts");
+        assert!(
+            precompile.execute(&[0u8; 100], SUWAPPU_BLAKE3_BASE_GAS).is_err(),
+            "under-gas reverts"
+        );
     }
 
     #[test]

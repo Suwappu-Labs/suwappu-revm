@@ -32,8 +32,8 @@ use alloy_consensus::{SignableTransaction, TxEip1559, TxEnvelope};
 use alloy_eips::eip2930::AccessList;
 use alloy_primitives::{Address, Signature, TxKind, U256};
 use alloy_rlp::Encodable;
-use k256::ecdsa::{RecoveryId, SigningKey};
 use k256::ecdsa::signature::hazmat::PrehashSigner;
+use k256::ecdsa::{RecoveryId, SigningKey};
 use serde_json::Value;
 
 // ── Node under test ──────────────────────────────────────────────────────────
@@ -74,8 +74,7 @@ const ACCOUNT_0_PRIVKEY_HEX: &str =
 /// 60 00           PUSH1 0x00
 /// f3              RETURN            → returns mem[0..32]
 /// ```
-const STORAGE_CREATION_HEX: &str =
-    "600d600c600039600d6000f363deadbeef60005260206000f3";
+const STORAGE_CREATION_HEX: &str = "600d600c600039600d6000f363deadbeef60005260206000f3";
 
 // Helper: simple ETH JSON-RPC call via reqwest.
 async fn rpc_call(port: u16, method: &str, params: Value) -> Value {
@@ -110,8 +109,8 @@ fn sign_eip1559(
     gas_limit: u64,
 ) -> Vec<u8> {
     let sk_bytes = hex::decode(privkey_hex).expect("valid privkey hex");
-    let signing_key = SigningKey::from_bytes(sk_bytes.as_slice().into())
-        .expect("valid k256 signing key");
+    let signing_key =
+        SigningKey::from_bytes(sk_bytes.as_slice().into()).expect("valid k256 signing key");
 
     let tx = TxEip1559 {
         chain_id,
@@ -132,9 +131,7 @@ fn sign_eip1559(
     let hash = tx.signature_hash();
 
     // Sign with k256 (deterministic, no RNG).
-    let (k256_sig, recid) = signing_key
-        .sign_prehash(hash.as_slice())
-        .expect("signing failed");
+    let (k256_sig, recid) = signing_key.sign_prehash(hash.as_slice()).expect("signing failed");
     let recovery_id: RecoveryId = recid;
 
     // Convert to alloy Signature.
@@ -179,27 +176,19 @@ async fn smoke_test() {
     );
 
     // ── 2. Account 0 is prefunded ────────────────────────────────────────────
-    let resp = rpc_call(
-        port,
-        "eth_getBalance",
-        serde_json::json!([ACCOUNT_0_ADDR, "latest"]),
-    )
-    .await;
+    let resp =
+        rpc_call(port, "eth_getBalance", serde_json::json!([ACCOUNT_0_ADDR, "latest"])).await;
     let balance_hex = resp["result"].as_str().expect("balance result");
-    let balance =
-        U256::from_str_radix(balance_hex.strip_prefix("0x").unwrap_or(balance_hex), 16)
-            .expect("valid hex balance");
-    assert!(
-        balance > U256::ZERO,
-        "account 0 must have a non-zero prefunded balance"
-    );
+    let balance = U256::from_str_radix(balance_hex.strip_prefix("0x").unwrap_or(balance_hex), 16)
+        .expect("valid hex balance");
+    assert!(balance > U256::ZERO, "account 0 must have a non-zero prefunded balance");
 
     // ── 3. Deploy a contract ─────────────────────────────────────────────────
     let creation_bytes = hex::decode(STORAGE_CREATION_HEX).expect("valid storage bytecode hex");
     let raw_tx = sign_eip1559(
         ACCOUNT_0_PRIVKEY_HEX,
         chain_id,
-        0, // nonce 0
+        0,    // nonce 0
         None, // CREATE
         U256::ZERO,
         creation_bytes,
@@ -207,36 +196,19 @@ async fn smoke_test() {
     );
     let raw_hex = format!("0x{}", hex::encode(&raw_tx));
 
-    let resp = rpc_call(
-        port,
-        "eth_sendRawTransaction",
-        serde_json::json!([raw_hex]),
-    )
-    .await;
-    assert!(
-        resp.get("error").is_none(),
-        "sendRawTransaction should not return error: {resp:?}"
-    );
+    let resp = rpc_call(port, "eth_sendRawTransaction", serde_json::json!([raw_hex])).await;
+    assert!(resp.get("error").is_none(), "sendRawTransaction should not return error: {resp:?}");
     let tx_hash = resp["result"].as_str().expect("tx hash result").to_string();
     assert_eq!(tx_hash.len(), 66, "tx hash must be 32 bytes hex with 0x prefix");
 
     // ── 4. Check receipt ─────────────────────────────────────────────────────
-    let resp = rpc_call(
-        port,
-        "eth_getTransactionReceipt",
-        serde_json::json!([tx_hash]),
-    )
-    .await;
+    let resp = rpc_call(port, "eth_getTransactionReceipt", serde_json::json!([tx_hash])).await;
     let receipt = &resp["result"];
     assert_ne!(receipt, &Value::Null, "receipt must exist for mined tx");
     assert_eq!(receipt["status"], "0x1", "deploy tx must succeed (status 0x1)");
-    let contract_address = receipt["contractAddress"]
-        .as_str()
-        .expect("contractAddress must be set on CREATE receipt");
-    assert_ne!(
-        contract_address, "null",
-        "contractAddress must not be null on CREATE"
-    );
+    let contract_address =
+        receipt["contractAddress"].as_str().expect("contractAddress must be set on CREATE receipt");
+    assert_ne!(contract_address, "null", "contractAddress must not be null on CREATE");
     assert_eq!(
         contract_address.len(),
         42,
@@ -266,10 +238,7 @@ async fn smoke_test() {
         }, "latest"]),
     )
     .await;
-    assert!(
-        resp.get("error").is_none(),
-        "eth_call should not fail: {resp:?}"
-    );
+    assert!(resp.get("error").is_none(), "eth_call should not fail: {resp:?}");
     let output_hex = resp["result"].as_str().expect("call output");
     // The contract returns 0xdeadbeef right-shifted to fill a 32-byte word.
     // Our bytecode: PUSH4 0xdeadbeef, PUSH1 0xe0, SHL => 0xdeadbeef << 224
@@ -295,10 +264,7 @@ async fn smoke_test() {
     )
     .await;
     // Should succeed (no error key).
-    assert!(
-        resp.get("error").is_none(),
-        "eth_call to 0x0102 (BLAKE3) must not error: {resp:?}"
-    );
+    assert!(resp.get("error").is_none(), "eth_call to 0x0102 (BLAKE3) must not error: {resp:?}");
     let blake3_output = resp["result"].as_str().expect("BLAKE3 output");
     let expected = "6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85";
     assert!(
@@ -323,10 +289,7 @@ async fn smoke_test() {
         }, "latest"]),
     )
     .await;
-    assert!(
-        resp.get("error").is_none(),
-        "eth_call to 0x0101 (ML-DSA-65) must not error: {resp:?}"
-    );
+    assert!(resp.get("error").is_none(), "eth_call to 0x0101 (ML-DSA-65) must not error: {resp:?}");
     let mldsa_output = resp["result"].as_str().expect("ML-DSA-65 output");
     // Must be exactly 32 bytes (64 hex chars + "0x" prefix = 66 chars).
     // Vanilla Anvil returns "0x" (2 chars). 32 bytes confirms the precompile ran.

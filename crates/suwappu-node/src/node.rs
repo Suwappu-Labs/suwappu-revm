@@ -12,8 +12,8 @@ use alloy_consensus::TxEnvelope;
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use revm::{
-    context::TxEnv,
     context::result::{ExecutionResult, Output},
+    context::TxEnv,
     context_interface::ContextTr,
     database::InMemoryDB,
     handler::EvmTr,
@@ -150,14 +150,16 @@ impl NodeState {
 
         // Pre-fund standard dev accounts.
         for addr_str in &DEV_ACCOUNTS {
-            let addr: revm::primitives::Address = addr_str
-                .parse()
-                .expect("valid dev account address");
-            db.insert_account_info(addr, AccountInfo {
-                balance: RevmU256::from(PREFUND_WEI),
-                nonce: 0,
-                ..Default::default()
-            });
+            let addr: revm::primitives::Address =
+                addr_str.parse().expect("valid dev account address");
+            db.insert_account_info(
+                addr,
+                AccountInfo {
+                    balance: RevmU256::from(PREFUND_WEI),
+                    nonce: 0,
+                    ..Default::default()
+                },
+            );
         }
 
         Self {
@@ -201,7 +203,10 @@ impl SuwappuNode {
     pub fn get_balance(&self, addr: Address) -> U256 {
         let state = self.state.lock().unwrap();
         let revm_addr = revm::primitives::Address::from(addr.into_array());
-        state.db.cache.accounts
+        state
+            .db
+            .cache
+            .accounts
             .get(&revm_addr)
             .map(|a| {
                 let bytes = a.info.balance.to_le_bytes::<32>();
@@ -214,17 +219,17 @@ impl SuwappuNode {
     pub fn get_nonce(&self, addr: Address) -> u64 {
         let state = self.state.lock().unwrap();
         let revm_addr = revm::primitives::Address::from(addr.into_array());
-        state.db.cache.accounts
-            .get(&revm_addr)
-            .map(|a| a.info.nonce)
-            .unwrap_or(0)
+        state.db.cache.accounts.get(&revm_addr).map(|a| a.info.nonce).unwrap_or(0)
     }
 
     /// Return deployed bytecode at address.
     pub fn get_code(&self, addr: Address) -> Bytes {
         let state = self.state.lock().unwrap();
         let revm_addr = revm::primitives::Address::from(addr.into_array());
-        state.db.cache.accounts
+        state
+            .db
+            .cache
+            .accounts
             .get(&revm_addr)
             .and_then(|a| {
                 if a.info.code_hash == revm::primitives::KECCAK_EMPTY {
@@ -376,13 +381,12 @@ impl SuwappuNode {
     /// (with status 0); only decode/validation errors return `Err`.
     pub fn send_raw_transaction(&self, raw: &[u8]) -> Result<B256, String> {
         // ── Decode the RLP-encoded signed transaction ───────────────────────
-        let envelope = TxEnvelope::decode(&mut &raw[..])
-            .map_err(|e| format!("RLP decode error: {e}"))?;
+        let envelope =
+            TxEnvelope::decode(&mut &raw[..]).map_err(|e| format!("RLP decode error: {e}"))?;
 
         // Recover the sender (secp256k1 ecrecover).
-        let sender_alloy = envelope
-            .recover_signer()
-            .map_err(|e| format!("sender recovery failed: {e}"))?;
+        let sender_alloy =
+            envelope.recover_signer().map_err(|e| format!("sender recovery failed: {e}"))?;
 
         // Map alloy Address → revm Address (same 20-byte layout).
         let sender = revm::primitives::Address::from(sender_alloy.into_array());
@@ -391,8 +395,16 @@ impl SuwappuNode {
         let tx_hash = keccak256(raw);
 
         // ── Extract the fields we need for TxEnv ────────────────────────────
-        let TxFields { nonce, gas_limit, gas_price, to_alloy, value_alloy, input, tx_type, chain_id_opt } =
-            extract_tx_fields(&envelope)?;
+        let TxFields {
+            nonce,
+            gas_limit,
+            gas_price,
+            to_alloy,
+            value_alloy,
+            input,
+            tx_type,
+            chain_id_opt,
+        } = extract_tx_fields(&envelope)?;
 
         let kind = match to_alloy {
             Some(a) => TxKind::Call(revm::primitives::Address::from(a.into_array())),
@@ -408,10 +420,7 @@ impl SuwappuNode {
         // Validate chain id (skip for legacy pre-EIP-155 txs where chain_id is None).
         if let Some(cid) = chain_id_opt {
             if cid != state.chain_id {
-                return Err(format!(
-                    "chain id mismatch: tx={cid} node={}",
-                    state.chain_id
-                ));
+                return Err(format!("chain id mismatch: tx={cid} node={}", state.chain_id));
             }
         }
 
@@ -465,9 +474,7 @@ impl SuwappuNode {
         state.block_number = block_number;
         let block_hash = keccak256(block_number.to_le_bytes());
 
-        let contract_addr_hex = contract_addr.map(|a| {
-            format!("0x{}", hex::encode(a.as_slice()))
-        });
+        let contract_addr_hex = contract_addr.map(|a| format!("0x{}", hex::encode(a.as_slice())));
 
         let receipt = Receipt {
             status: format!("0x{status:x}"),
@@ -522,7 +529,10 @@ impl SuwappuNode {
     /// Build a minimal block stub for `eth_getBlockByNumber`.
     pub fn get_block(&self, number: u64) -> serde_json::Value {
         let state = self.state.lock().unwrap();
-        let hash = state.block_hashes.get(&number).copied()
+        let hash = state
+            .block_hashes
+            .get(&number)
+            .copied()
             .unwrap_or_else(|| keccak256(number.to_le_bytes()));
         serde_json::json!({
             "number": format!("0x{number:x}"),

@@ -168,17 +168,13 @@ fn sign_eip1559(
 async fn send_tx(port: u16, raw: &[u8]) -> String {
     let raw_hex = format!("0x{}", hex::encode(raw));
     let resp = rpc_call(port, "eth_sendRawTransaction", serde_json::json!([raw_hex])).await;
-    assert!(
-        resp.get("error").is_none(),
-        "eth_sendRawTransaction returned error: {resp:?}"
-    );
+    assert!(resp.get("error").is_none(), "eth_sendRawTransaction returned error: {resp:?}");
     resp["result"].as_str().expect("tx hash").to_string()
 }
 
 /// Fetch receipt and return the JSON object.
 async fn get_receipt(port: u16, tx_hash: &str) -> Value {
-    let resp =
-        rpc_call(port, "eth_getTransactionReceipt", serde_json::json!([tx_hash])).await;
+    let resp = rpc_call(port, "eth_getTransactionReceipt", serde_json::json!([tx_hash])).await;
     let r = &resp["result"];
     assert_ne!(r, &Value::Null, "receipt must exist for tx {tx_hash}");
     r.clone()
@@ -186,9 +182,8 @@ async fn get_receipt(port: u16, tx_hash: &str) -> Value {
 
 /// Parse a `0x`-prefixed hex address from a receipt field into `Address`.
 fn parse_contract_address(receipt: &Value) -> Address {
-    let s = receipt["contractAddress"]
-        .as_str()
-        .expect("contractAddress must be set on CREATE receipt");
+    let s =
+        receipt["contractAddress"].as_str().expect("contractAddress must be set on CREATE receipt");
     assert_ne!(s, "null", "contractAddress must not be null");
     s.parse::<Address>().expect("valid address")
 }
@@ -302,9 +297,8 @@ async fn destination_live() {
 
     // Sanity: registry.networkId() round-trips through the constructor immutable.
     let networkid_call = IRegistry::networkIdCall {}.abi_encode();
-    let net_raw = eth_call_raw(port, registry, networkid_call)
-        .await
-        .expect("networkId call must succeed");
+    let net_raw =
+        eth_call_raw(port, registry, networkid_call).await.expect("networkId call must succeed");
     let net = U256::abi_decode(&net_raw).expect("decode networkId");
     assert_eq!(net, U256::from(NETWORK_ID), "constructor-set networkId mismatch");
 
@@ -334,7 +328,8 @@ async fn destination_live() {
     let stakes: Vec<U256> = vec![U256::from(100u64); 4]; // equal stake: total=400, quorum=267
 
     // ── 4. bootstrapEpoch0 ───────────────────────────────────────────────────
-    let bootstrap_data = IRegistry::bootstrapEpoch0Call { pkHashes: pk_hashes, stakes }.abi_encode();
+    let bootstrap_data =
+        IRegistry::bootstrapEpoch0Call { pkHashes: pk_hashes, stakes }.abi_encode();
     let raw = sign_eip1559(
         ACCOUNT_0_PRIVKEY_HEX,
         CHAIN_ID,
@@ -349,8 +344,7 @@ async fn destination_live() {
     nonce += 1;
 
     // Verify quorum threshold: floor(400*2/3)+1 = 267.
-    let threshold_call =
-        IRegistry::quorumThresholdCall { epoch: U256::ZERO }.abi_encode();
+    let threshold_call = IRegistry::quorumThresholdCall { epoch: U256::ZERO }.abi_encode();
     let thr_raw = eth_call_raw(port, registry, threshold_call)
         .await
         .expect("quorumThreshold call must succeed");
@@ -371,9 +365,8 @@ async fn destination_live() {
         stateRoot: state_root_b256,
     }
     .abi_encode();
-    let digest_raw = eth_call_raw(port, oracle, digest_call)
-        .await
-        .expect("headerDigest eth_call must succeed");
+    let digest_raw =
+        eth_call_raw(port, oracle, digest_call).await.expect("headerDigest eth_call must succeed");
     let onchain_digest_bytes: [u8; 32] = digest_raw.try_into().expect("32-byte digest");
     assert_eq!(
         onchain_digest_bytes, offchain_digest,
@@ -388,8 +381,7 @@ async fn destination_live() {
     // Stake: 3 × 100 = 300 ≥ 267 → should finalize.
     let signers = &validators[..3]; // first 3, already sorted ascending
     let pubkeys: Vec<Bytes> = signers.iter().map(|v| Bytes::from(v.pubkey_bytes())).collect();
-    let sigs: Vec<Bytes> =
-        signers.iter().map(|v| Bytes::from(v.sign(&offchain_digest))).collect();
+    let sigs: Vec<Bytes> = signers.iter().map(|v| Bytes::from(v.sign(&offchain_digest))).collect();
 
     let submit_data = IOracle::submitHeaderCall {
         blockNumber: U256::from(block_number),
@@ -400,14 +392,8 @@ async fn destination_live() {
     }
     .abi_encode();
 
-    let raw = sign_eip1559(
-        ACCOUNT_0_PRIVKEY_HEX,
-        CHAIN_ID,
-        nonce,
-        Some(oracle),
-        submit_data,
-        GAS_LIMIT,
-    );
+    let raw =
+        sign_eip1559(ACCOUNT_0_PRIVKEY_HEX, CHAIN_ID, nonce, Some(oracle), submit_data, GAS_LIMIT);
     let tx_hash = send_tx(port, &raw).await;
     let receipt = get_receipt(port, &tx_hash).await;
 
@@ -425,10 +411,7 @@ async fn destination_live() {
 
     // ── 8. Read-back: headerStateRoot must equal stateRoot ───────────────────
     let stored_root = read_header_state_root(port, oracle, block_number).await;
-    assert_eq!(
-        stored_root, state_root,
-        "headerStateRoot must equal the finalized stateRoot"
-    );
+    assert_eq!(stored_root, state_root, "headerStateRoot must equal the finalized stateRoot");
 
     println!("  headerStateRoot({block_number}) = 0x{}", hex::encode(stored_root));
     println!("HEADLINE: real 3-of-4 ML-DSA-65 quorum submitHeader FINALIZED over JSON-RPC: YES");
@@ -455,14 +438,8 @@ async fn destination_live() {
     }
     .abi_encode();
 
-    let raw = sign_eip1559(
-        ACCOUNT_0_PRIVKEY_HEX,
-        CHAIN_ID,
-        nonce,
-        Some(oracle),
-        sub_data,
-        GAS_LIMIT,
-    );
+    let raw =
+        sign_eip1559(ACCOUNT_0_PRIVKEY_HEX, CHAIN_ID, nonce, Some(oracle), sub_data, GAS_LIMIT);
     let sub_tx_hash = send_tx(port, &raw).await;
     let sub_receipt = get_receipt(port, &sub_tx_hash).await;
 
@@ -481,7 +458,10 @@ async fn destination_live() {
     // sub-quorum must NOT write a state root for block 99.
     let sub_root = read_header_state_root(port, oracle, sub_block_number).await;
     assert_eq!(sub_root, [0u8; 32], "sub-quorum must not write headerStateRoot for block 99");
-    println!("  headerStateRoot({sub_block_number}) = 0x{} (zero — not finalized)", hex::encode(sub_root));
+    println!(
+        "  headerStateRoot({sub_block_number}) = 0x{} (zero — not finalized)",
+        hex::encode(sub_root)
+    );
 
     // Final summary.
     println!();

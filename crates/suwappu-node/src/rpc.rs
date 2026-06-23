@@ -6,13 +6,7 @@
 //! **Dev node only** — no authentication, no rate limiting.
 
 use alloy_primitives::{Address, Bytes, B256, U256};
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    routing::post,
-    Json, Router,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::post, Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -81,26 +75,16 @@ async fn rpc_handler(
 fn dispatch(node: &SuwappuNode, id: Value, method: &str, params: &Value) -> RpcResponse {
     match method {
         // ── Identity ─────────────────────────────────────────────────────────
-        "eth_chainId" => {
-            RpcResponse::ok(id, json!(format!("0x{:x}", node.chain_id())))
-        }
+        "eth_chainId" => RpcResponse::ok(id, json!(format!("0x{:x}", node.chain_id()))),
 
-        "net_version" => {
-            RpcResponse::ok(id, json!(node.chain_id().to_string()))
-        }
+        "net_version" => RpcResponse::ok(id, json!(node.chain_id().to_string())),
 
         // ── Block info ────────────────────────────────────────────────────────
-        "eth_blockNumber" => {
-            RpcResponse::ok(id, json!(format!("0x{:x}", node.block_number())))
-        }
+        "eth_blockNumber" => RpcResponse::ok(id, json!(format!("0x{:x}", node.block_number()))),
 
-        "eth_gasPrice" => {
-            RpcResponse::ok(id, json!("0x0"))
-        }
+        "eth_gasPrice" => RpcResponse::ok(id, json!("0x0")),
 
-        "eth_maxPriorityFeePerGas" => {
-            RpcResponse::ok(id, json!("0x0"))
-        }
+        "eth_maxPriorityFeePerGas" => RpcResponse::ok(id, json!("0x0")),
 
         // ── Account state ────────────────────────────────────────────────────
         "eth_getBalance" => {
@@ -134,29 +118,21 @@ fn dispatch(node: &SuwappuNode, id: Value, method: &str, params: &Value) -> RpcR
         }
 
         // ── Calls ────────────────────────────────────────────────────────────
-        "eth_call" => {
-            match parse_call_object(params) {
-                Ok((from, to, data, value)) => {
-                    match node.eth_call(from, to, data, value, None) {
-                        Ok(out) => RpcResponse::ok(id, json!(format!("0x{}", hex::encode(&out)))),
-                        Err(e) => RpcResponse::err(id, 3, e),
-                    }
-                }
-                Err(e) => RpcResponse::err(id, -32602, e),
-            }
-        }
+        "eth_call" => match parse_call_object(params) {
+            Ok((from, to, data, value)) => match node.eth_call(from, to, data, value, None) {
+                Ok(out) => RpcResponse::ok(id, json!(format!("0x{}", hex::encode(&out)))),
+                Err(e) => RpcResponse::err(id, 3, e),
+            },
+            Err(e) => RpcResponse::err(id, -32602, e),
+        },
 
-        "eth_estimateGas" => {
-            match parse_call_object(params) {
-                Ok((from, to, data, value)) => {
-                    match node.estimate_gas(from, to, data, value) {
-                        Ok(gas) => RpcResponse::ok(id, json!(format!("0x{gas:x}"))),
-                        Err(e) => RpcResponse::err(id, 3, e),
-                    }
-                }
-                Err(e) => RpcResponse::err(id, -32602, e),
-            }
-        }
+        "eth_estimateGas" => match parse_call_object(params) {
+            Ok((from, to, data, value)) => match node.estimate_gas(from, to, data, value) {
+                Ok(gas) => RpcResponse::ok(id, json!(format!("0x{gas:x}"))),
+                Err(e) => RpcResponse::err(id, 3, e),
+            },
+            Err(e) => RpcResponse::err(id, -32602, e),
+        },
 
         // ── Transactions ─────────────────────────────────────────────────────
         "eth_sendRawTransaction" => {
@@ -199,25 +175,23 @@ fn dispatch(node: &SuwappuNode, id: Value, method: &str, params: &Value) -> RpcR
         }
 
         // ── Catch-all ─────────────────────────────────────────────────────────
-        other => RpcResponse::err(
-            id,
-            -32601,
-            format!("method not found: {other}"),
-        ),
+        other => RpcResponse::err(id, -32601, format!("method not found: {other}")),
     }
 }
 
 // ─── Parameter parsers ────────────────────────────────────────────────────────
 
 fn parse_address(params: &Value, idx: usize) -> Result<Address, String> {
-    let s = params.get(idx)
+    let s = params
+        .get(idx)
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("missing param[{idx}] (address)"))?;
     s.parse::<Address>().map_err(|e| format!("invalid address {s:?}: {e}"))
 }
 
 fn parse_hash(params: &Value, idx: usize) -> Result<B256, String> {
-    let s = params.get(idx)
+    let s = params
+        .get(idx)
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("missing param[{idx}] (hash)"))?;
     let hex_s = s.strip_prefix("0x").unwrap_or(s);
@@ -246,28 +220,32 @@ fn parse_block_tag(params: &Value, idx: usize, current: u64) -> u64 {
 }
 
 /// Parse an `eth_call`/`eth_estimateGas` transaction object.
-fn parse_call_object(params: &Value) -> Result<(Option<Address>, Option<Address>, Bytes, U256), String> {
+fn parse_call_object(
+    params: &Value,
+) -> Result<(Option<Address>, Option<Address>, Bytes, U256), String> {
     let obj = params.get(0).ok_or("missing call object")?;
 
-    let from = obj.get("from")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse::<Address>().ok());
+    let from = obj.get("from").and_then(|v| v.as_str()).and_then(|s| s.parse::<Address>().ok());
 
-    let to = obj.get("to")
-        .and_then(|v| v.as_str())
-        .and_then(|s| if s == "0x" || s.is_empty() { None } else { s.parse::<Address>().ok() });
+    let to = obj.get("to").and_then(|v| v.as_str()).and_then(|s| {
+        if s == "0x" || s.is_empty() {
+            None
+        } else {
+            s.parse::<Address>().ok()
+        }
+    });
 
-    let data = obj.get("data").or_else(|| obj.get("input"))
+    let data = obj
+        .get("data")
+        .or_else(|| obj.get("input"))
         .and_then(|v| v.as_str())
         .map(decode_hex_input)
         .transpose()?
         .map(Bytes::from)
         .unwrap_or_default();
 
-    let value = obj.get("value")
-        .and_then(|v| v.as_str())
-        .map(parse_u256_hex)
-        .unwrap_or(Ok(U256::ZERO))?;
+    let value =
+        obj.get("value").and_then(|v| v.as_str()).map(parse_u256_hex).unwrap_or(Ok(U256::ZERO))?;
 
     Ok((from, to, data, value))
 }
@@ -290,9 +268,7 @@ fn format_u256_hex(v: U256) -> String {
 
 /// Start the HTTP JSON-RPC server and block forever.
 pub async fn serve(node: SuwappuNode, port: u16) {
-    let app = Router::new()
-        .route("/", post(rpc_handler))
-        .with_state(node);
+    let app = Router::new().route("/", post(rpc_handler)).with_state(node);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr)
@@ -307,7 +283,5 @@ pub async fn serve(node: SuwappuNode, port: u16) {
     }
     println!("  THIS IS A DEV NODE. Not production.");
 
-    axum::serve(listener, app)
-        .await
-        .expect("server error");
+    axum::serve(listener, app).await.expect("server error");
 }

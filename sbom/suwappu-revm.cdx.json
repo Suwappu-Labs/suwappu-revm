@@ -9064,7 +9064,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///tmp/b3-revm/crates/suwappu-node#0.2.0",
+      "bom-ref": "path+file:crates/suwappu-node#0.2.0",
       "author": "",
       "name": "suwappu-node",
       "version": "0.2.0",
@@ -9089,14 +9089,14 @@
       "components": [
         {
           "type": "library",
-          "bom-ref": "path+file:///tmp/b3-revm/crates/suwappu-node#0.2.0 bin-target-0",
+          "bom-ref": "path+file:crates/suwappu-node#0.2.0 bin-target-0",
           "name": "suwappu_node",
           "version": "0.2.0",
           "purl": "pkg:cargo/suwappu-node@0.2.0?download_url=file://.#src/lib.rs"
         },
         {
           "type": "application",
-          "bom-ref": "path+file:///tmp/b3-revm/crates/suwappu-node#0.2.0 bin-target-1",
+          "bom-ref": "path+file:crates/suwappu-node#0.2.0 bin-target-1",
           "name": "suwappu-node",
           "version": "0.2.0",
           "purl": "pkg:cargo/suwappu-node@0.2.0?download_url=file://.#src/main.rs"
@@ -9105,7 +9105,7 @@
     },
     {
       "type": "library",
-      "bom-ref": "path+file:///tmp/b3-revm/crates/suwappu-revm#0.2.0",
+      "bom-ref": "path+file:crates/suwappu-revm#0.2.0",
       "author": "",
       "name": "suwappu-revm",
       "version": "0.2.0",

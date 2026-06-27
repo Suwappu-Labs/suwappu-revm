@@ -376,6 +376,47 @@ monad-revm/
 - [Monad precompiles](https://docs.monad.xyz/developer-essentials/precompiles)
 - [Monad staking precompile docs](https://docs.monad.xyz/developer-essentials/staking/staking-precompile)
 
+## Supply chain / Security
+
+`suwappu-revm` is a fork of upstream [revm](https://github.com/bluealloy/revm) and
+pulls in the broader revm/alloy dependency tree, so its supply chain is large by
+design. To make that surface auditable, this repository ships supply-chain tooling.
+
+### Software Bill of Materials (SBOM)
+
+A CycloneDX SBOM for the full Cargo workspace is committed at:
+
+```
+sbom/suwappu-revm.cdx.json
+```
+
+- Format: CycloneDX 1.5 (`bomFormat: CycloneDX`), JSON.
+- Generated with [`cargo-cyclonedx`](https://github.com/CycloneDX/cyclonedx-rust-cargo)
+  from `Cargo.lock` (the per-member SBOMs for the `suwappu-revm` and `suwappu-node`
+  crates are merged and de-duplicated by package URL).
+- Covers every resolved crate in the dependency graph, with
+  `pkg:cargo/<name>@<version>` package URLs. Upstream revm and alloy crates appear
+  in the SBOM — that is expected for a fork.
+
+The `.github/workflows/sbom.yml` workflow regenerates the SBOM and attaches it as a
+release asset on every published GitHub Release (and on manual dispatch).
+
+### OpenSSF Scorecard
+
+`.github/workflows/scorecard.yml` runs the [OpenSSF Scorecard](https://github.com/ossf/scorecard)
+checks weekly and on pushes to the default branch. Results are uploaded to the
+repository's Security tab as SARIF; they are **not** published to the public OpenSSF
+API (`publish_results: false`), so there is no public Scorecard badge.
+
+### Notes
+
+- All third-party GitHub Actions in these workflows are pinned to full commit SHAs.
+- Actions billing is currently disabled on this repository, so the workflows are
+  staged and will run once billing is enabled. The committed SBOM provides the
+  artifact in the meantime.
+- These are tooling and inventory aids only. This project has **not** undergone a
+  third-party security audit and makes no SOC 2 or other compliance claims.
+
 ## License
 
 Revm is licensed under MIT License.

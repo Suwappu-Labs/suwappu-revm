@@ -1,0 +1,35 @@
+name: SBOM
+
+# Generates a CycloneDX Software Bill-of-Materials for the suwappu-revm
+# workspace and attaches it to each published GitHub Release.
+#
+# A pre-generated SBOM is also committed at sbom/suwappu-revm.cdx.json so the
+# artifact is available without running this workflow (Actions billing is
+# currently disabled on this repo). All third-party actions are SHA-pinned.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: Generate CycloneDX SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to upload the SBOM as a release asset
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Generate and attach SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          artifact-name: suwappu-revm.cdx.json
+          output-file: suwappu-revm.cdx.json
+          upload-release-assets: true

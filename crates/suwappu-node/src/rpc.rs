@@ -174,6 +174,21 @@ fn dispatch(node: &SuwappuNode, id: Value, method: &str, params: &Value) -> RpcR
             RpcResponse::ok(id, node.get_block(block_number))
         }
 
+        // ── Logs ─────────────────────────────────────────────────────────────
+        "eth_getLogs" => match parse_filter_object(params, node.block_number()) {
+            Ok(filter) => {
+                let logs = node.get_logs(
+                    filter.from_block,
+                    filter.to_block,
+                    filter.block_hash,
+                    &filter.addresses,
+                    &filter.topics,
+                );
+                RpcResponse::ok(id, serde_json::to_value(&logs).unwrap_or(Value::Null))
+            }
+            Err(e) => RpcResponse::err(id, -32602, e),
+        },
+
         // ── Catch-all ─────────────────────────────────────────────────────────
         other => RpcResponse::err(id, -32601, format!("method not found: {other}")),
     }
@@ -194,14 +209,7 @@ fn parse_hash(params: &Value, idx: usize) -> Result<B256, String> {
         .get(idx)
         .and_then(|v| v.as_str())
         .ok_or_else(|| format!("missing param[{idx}] (hash)"))?;
-    let hex_s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(hex_s).map_err(|e| format!("invalid hash {s:?}: {e}"))?;
-    if bytes.len() != 32 {
-        return Err(format!("hash must be 32 bytes, got {}", bytes.len()));
-    }
-    let mut arr = [0u8; 32];
-    arr.copy_from_slice(&bytes);
-    Ok(B256::from(arr))
+    parse_hash_str(s)
 }
 
 fn parse_block_tag(params: &Value, idx: usize, current: u64) -> u64 {
@@ -248,6 +256,105 @@ fn parse_call_object(
         obj.get("value").and_then(|v| v.as_str()).map(parse_u256_hex).unwrap_or(Ok(U256::ZERO))?;
 
     Ok((from, to, data, value))
+}
+
+/// Parsed `eth_getLogs` filter.
+struct LogFilter {
+    from_block: u64,
+    to_block: u64,
+    block_hash: Option<B256>,
+    addresses: Vec<Address>,
+    topics: Vec<Option<Vec<B256>>>,
+}
+
+/// Parse an `eth_getLogs` filter object.
+fn parse_filter_object(params: &Value, current_block: u64) -> Result<LogFilter, String> {
+    let obj = params.get(0).ok_or("missing filter object")?;
+    if !obj.is_object() {
+        return Err("filter must be an object".to_string());
+    }
+
+    let block_hash = match obj.get("blockHash").and_then(|v| v.as_str()) {
+        Some(s) => Some(parse_hash_str(s)?),
+        None => None,
+    };
+    if block_hash.is_some() && (obj.get("fromBlock").is_some() || obj.get("toBlock").is_some()) {
+        return Err("blockHash is mutually exclusive with fromBlock/toBlock".to_string());
+    }
+
+    let from_block = parse_block_field(obj.get("fromBlock"), current_block);
+    let to_block = parse_block_field(obj.get("toBlock"), current_block);
+
+    let addresses = match obj.get("address") {
+        None | Some(Value::Null) => vec![],
+        Some(Value::String(s)) => {
+            vec![s.parse::<Address>().map_err(|e| format!("invalid address {s:?}: {e}"))?]
+        }
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(|v| {
+                let s = v.as_str().ok_or("address array entries must be strings")?;
+                s.parse::<Address>().map_err(|e| format!("invalid address {s:?}: {e}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?,
+        Some(other) => return Err(format!("invalid address filter: {other}")),
+    };
+
+    let topics = match obj.get("topics") {
+        None | Some(Value::Null) => vec![],
+        Some(Value::Array(items)) => {
+            if items.len() > 4 {
+                return Err("topics filter has more than 4 positions".to_string());
+            }
+            items
+                .iter()
+                .map(|entry| match entry {
+                    Value::Null => Ok(None),
+                    Value::String(s) => Ok(Some(vec![parse_hash_str(s)?])),
+                    Value::Array(alts) => alts
+                        .iter()
+                        .map(|v| {
+                            let s = v.as_str().ok_or("topic entries must be strings")?;
+                            parse_hash_str(s)
+                        })
+                        .collect::<Result<Vec<_>, String>>()
+                        .map(Some),
+                    other => Err(format!("invalid topic filter entry: {other}")),
+                })
+                .collect::<Result<Vec<_>, String>>()?
+        }
+        Some(other) => return Err(format!("invalid topics filter: {other}")),
+    };
+
+    Ok(LogFilter { from_block, to_block, block_hash, addresses, topics })
+}
+
+/// Parse a `fromBlock`/`toBlock` field value (tag or hex quantity).
+fn parse_block_field(v: Option<&Value>, current: u64) -> u64 {
+    let s = match v.and_then(|v| v.as_str()) {
+        Some(s) => s,
+        None => return current,
+    };
+    match s {
+        "latest" | "pending" | "safe" | "finalized" => current,
+        "earliest" => 0,
+        hex_str => {
+            let hex_s = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+            u64::from_str_radix(hex_s, 16).unwrap_or(current)
+        }
+    }
+}
+
+/// Parse a 32-byte hash from a hex string.
+fn parse_hash_str(s: &str) -> Result<B256, String> {
+    let hex_s = s.strip_prefix("0x").unwrap_or(s);
+    let bytes = hex::decode(hex_s).map_err(|e| format!("invalid hash {s:?}: {e}"))?;
+    if bytes.len() != 32 {
+        return Err(format!("hash must be 32 bytes, got {}", bytes.len()));
+    }
+    let mut arr = [0u8; 32];
+    arr.copy_from_slice(&bytes);
+    Ok(B256::from(arr))
 }
 
 fn decode_hex_input(s: &str) -> Result<Vec<u8>, String> {

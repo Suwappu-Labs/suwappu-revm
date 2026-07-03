@@ -74,9 +74,10 @@ each prefunded with **10 000 ETH**:
 | `eth_call` | Read-only execution; no state mutation |
 | `eth_estimateGas` | Sandbox execution + 20% buffer |
 | `eth_sendRawTransaction` | Decode RLP, recover sender, mine 1 block |
-| `eth_getTransactionReceipt` | Full receipt including `contractAddress` |
+| `eth_getTransactionReceipt` | Full receipt including `contractAddress` and emitted `logs` |
 | `eth_getTransactionByHash` | Stored tx fields |
 | `eth_getBlockByNumber` | Minimal stub (number, hash, timestamp, `baseFeePerGas: 0x0`) |
+| `eth_getLogs` | Block range (`fromBlock`/`toBlock`), `blockHash`, `address` (single or array), positional `topics` (exact / `null` wildcard / any-of arrays) |
 
 Blob transactions (EIP-4844) are rejected. All other EIP-1559, EIP-2930, and
 legacy transactions are accepted.
@@ -118,13 +119,15 @@ The `node_smoke` integration test:
 
 This is a dev node. The following are known gaps vs a production node or Anvil:
 
-- **No `eth_getLogs` / event subscriptions.** All receipts carry empty `logs`.
-  A bridge relayer that watches for `Lock` or `Mint` events via log filters will
-  get no results. Use direct polling (call contract view functions) instead.
+- **No log subscriptions or filter objects.** `eth_getLogs` works (receipts
+  carry real logs, filterable by range/address/topics), but
+  `eth_newFilter`/`eth_getFilterLogs`/`eth_subscribe` do not exist — relayers
+  must poll `eth_getLogs`. `logsBloom` is always zeroed; do not use it to
+  skip blocks.
 - **No persistence.** All state is in-process memory; restart = blank slate.
 - **Single-tx blocks.** Each `eth_sendRawTransaction` mines exactly one block.
   Block-level fields like `gasUsed` on the block stub are always `0x0`.
-- **No `eth_getLogs`, `eth_getFilterLogs`, subscriptions, or `eth_feeHistory`.**
+- **No `eth_feeHistory`.**
 - **No blob transactions (EIP-4844).** Rejected at the JSON-RPC layer.
 - **`eth_estimateGas` is not exercised in the smoke test.** The test hardcodes
   `gas_limit = 500_000`. The estimate→sign→send loop is implemented but not

@@ -1,10 +1,26 @@
 # Suwappu REVM
 
-[![Crates.io](https://img.shields.io/crates/v/monad-revm.svg)](https://crates.io/crates/monad-revm)
-[![Documentation](https://docs.rs/monad-revm/badge.svg)](https://docs.rs/monad-revm)
-[![License](https://img.shields.io/crates/l/monad-revm.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-`monad-revm` extends [revm](https://github.com/bluealloy/revm) with Monad-specific execution semantics: gas model changes, repriced precompiles, full staking precompile support, and the Monad reserve-balance precompile.
+> **Status: pre-production.** This code has **not** undergone a third-party
+> security audit. The bundled `suwappu-node` is a development node only.
+> See [SECURITY.md](SECURITY.md) for the disclosure policy.
+
+`suwappu-revm` is the execution layer of the Suwappu-DAG chain: a fork of
+[revm](https://github.com/bluealloy/revm) that layers Suwappu's post-quantum
+bridge verifier on top of Monad's execution semantics.
+
+## Lineage: what is inherited, what is ours
+
+We build on open lineage deliberately — the same way Tempo and Arc build on
+Reth/REVM — and keep upstream naming (`Monad*` types) where behavior is
+unchanged, so diffs against upstream stay reviewable.
+
+| Layer | Origin | What it provides |
+|-------|--------|------------------|
+| [revm](https://github.com/bluealloy/revm) v34 | upstream | Core EVM interpreter (Osaka) |
+| Monad execution semantics | [monad-revm](https://github.com/category-labs/monad-revm) lineage | Gas repricing, no refunds, 128KB code limit, staking precompile (`0x1000`), reserve balance (`0x1001`) |
+| **Suwappu additions** | this repo | ML-DSA-65 (FIPS 204) verify precompile (`0x0101`), BLAKE3 precompile (`0x0102`), the post-quantum bridge verifier path, and `suwappu-node` (dev JSON-RPC node) |
 
 ## EVM Compatibility
 
@@ -13,7 +29,7 @@
 | **revm** | v34.0.0 |
 | **Monad spec** | `MONAD_NINE` (Osaka-compatible with Monad-specific exclusions) |
 
-## What Monad Changes
+## Monad-inherited execution semantics
 
 ### Gas model
 
@@ -86,7 +102,7 @@ Pool rewards use an accumulator model:
 
 See implementation constants in `src/staking/constants.rs`.
 
-### Staking API surface in `monad-revm`
+### Staking API surface in `suwappu-revm`
 
 ### Read methods
 
@@ -133,11 +149,11 @@ See implementation constants in `src/staking/constants.rs`.
 
 ### Important parity note
 
-`monad-revm` tracks C++ staking behavior closely, but there are explicit implementation notes to keep in mind:
+`suwappu-revm` tracks the canonical Monad C++ staking behavior closely, but there are explicit implementation notes to keep in mind:
 
 - `addValidator` currently skips signature verification and uses simplified key-to-address derivation in `write.rs`. This is intentional in the current implementation and should be considered when writing integration tests.
 
-### How staking is implemented in `monad-revm`
+### How staking is implemented in `suwappu-revm`
 
 Core modules:
 
@@ -196,7 +212,7 @@ Error behavior matches the canonical Monad implementation:
 ## Suwappu bridge: destination PQ verifier
 
 `suwappu-revm` is the Suwappu-DAG EVM fork. In addition to the Monad-inherited
-execution semantics documented below, it registers two Suwappu-specific
+execution semantics documented above, it registers two Suwappu-specific
 precompiles that are the destination-side verifier for the Suwappu cross-chain
 bridge:
 
@@ -274,22 +290,19 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-monad-revm = { git = "https://github.com/category-labs/monad-revm", branch = "main" }
+suwappu-revm = { git = "https://github.com/Suwappu-Labs/suwappu-revm", branch = "main" }
 ```
 
-Or from crates.io:
-
-```toml
-[dependencies]
-monad-revm = "0.1"
-```
+The crate is not yet published to crates.io. Note that the ML-DSA-65 verifier
+is pulled from a pinned git tag on `Suwappu-Labs/suwappu-dag`; building
+requires access to that repository (see `crates/suwappu-revm/Cargo.toml`).
 
 ## Usage
 
 ### Basic example
 
 ```rust
-use monad_revm::{MonadBuilder, DefaultMonad};
+use suwappu_revm::{MonadBuilder, DefaultMonad};
 use revm::{
     context::{Context, TxEnv},
     database::InMemoryDB,
@@ -313,7 +326,7 @@ let result = evm.transact(tx).expect("Transaction failed");
 ### With inspector
 
 ```rust
-use monad_revm::{MonadBuilder, DefaultMonad};
+use suwappu_revm::{MonadBuilder, DefaultMonad};
 use revm::{context::Context, inspector::NoOpInspector};
 
 let ctx = Context::monad();
@@ -323,7 +336,7 @@ let mut evm = ctx.build_monad_with_inspector(NoOpInspector {});
 ### With custom database
 
 ```rust
-use monad_revm::{MonadBuilder, DefaultMonad};
+use suwappu_revm::{MonadBuilder, DefaultMonad};
 use revm::context::Context;
 
 let db = MyCustomDatabase::new();
@@ -334,47 +347,49 @@ let mut evm = ctx.build_monad();
 ## Architecture
 
 ```text
-monad-revm/
+suwappu-revm/
 ├── crates/
-│   └── monad-revm/
-│       └── src/
-│           ├── lib.rs
-│           ├── spec.rs
-│           ├── cfg.rs
-│           ├── handler.rs
-│           ├── instructions.rs
-│           ├── precompiles.rs
-│           ├── evm.rs
-│           ├── api/
-│           │   ├── block.rs
-│           │   ├── builder.rs
-│           │   ├── exec.rs
-│           │   └── default_ctx.rs
-│           └── staking/
-│               ├── mod.rs
-│               ├── write.rs
-│               ├── abi.rs
-│               ├── interface.rs
-│               ├── storage.rs
-│               └── types.rs
+│   ├── suwappu-revm/          # the EVM library
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── spec.rs
+│   │       ├── cfg.rs
+│   │       ├── chain.rs
+│   │       ├── handler.rs
+│   │       ├── instructions.rs
+│   │       ├── journal.rs
+│   │       ├── precompiles.rs  # incl. 0x0101 ML-DSA-65, 0x0102 BLAKE3
+│   │       ├── evm.rs
+│   │       ├── api/            # builder, block lifecycle, exec helpers
+│   │       ├── memory/
+│   │       ├── reserve_balance/
+│   │       └── staking/
+│   └── suwappu-node/          # dev-only JSON-RPC node (see its README)
 └── Cargo.toml
 ```
+
+The Rust API keeps upstream `Monad*` type names (`MonadBuilder`,
+`Context::monad()`, `MonadEvm`, …) where behavior matches the Monad lineage;
+only Suwappu-specific additions introduce new names.
 
 ## Feature flags
 
 - `serde`: Enable serialization for `MonadSpecId`.
 - `alloy-evm`: Enable integration with `alloy_evm::precompiles::PrecompilesMap`.
 
-## Integration layers
+## References (upstream lineage)
 
-- [`alloy-monad-evm`](https://github.com/category-labs/alloy-monad-evm): Alloy `Evm` / `EvmFactory` wrapper over `monad-revm`.
-- [`monad-foundry`](https://github.com/category-labs/foundry/tree/monad): Foundry integration (Forge/Anvil/Cast/Chisel).
-
-## References
+The Monad-inherited semantics are documented upstream; these are the
+canonical references for the behavior this fork tracks:
 
 - [Monad opcode pricing](https://docs.monad.xyz/developer-essentials/opcode-pricing)
 - [Monad precompiles](https://docs.monad.xyz/developer-essentials/precompiles)
 - [Monad staking precompile docs](https://docs.monad.xyz/developer-essentials/staking/staking-precompile)
+- Upstream ecosystem integrations for the Monad lineage:
+  [`alloy-monad-evm`](https://github.com/category-labs/alloy-monad-evm),
+  [`monad-foundry`](https://github.com/category-labs/foundry/tree/monad).
+  These target `monad-revm`, not this fork; the `run_staking_with_reader`
+  integration path exists for such environments.
 
 ## Supply chain / Security
 
@@ -417,8 +432,14 @@ API (`publish_results: false`), so there is no public Scorecard badge.
 - These are tooling and inventory aids only. This project has **not** undergone a
   third-party security audit and makes no SOC 2 or other compliance claims.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through
+[SECURITY.md](SECURITY.md), not the public issue tracker.
+
 ## License
 
-Revm is licensed under MIT License.
+This project is licensed under the [MIT License](LICENSE), the same license
+as upstream revm.
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in these crates by you, shall be licensed as above, without any additional terms or conditions.

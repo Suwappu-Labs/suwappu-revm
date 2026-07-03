@@ -73,7 +73,7 @@ pub struct Receipt {
     pub transaction_index: String,
     /// Block hash.
     pub block_hash: String,
-    /// EVM logs (empty for now — sufficient for deploy + relayer).
+    /// EVM logs emitted by this transaction (standard log objects).
     pub logs: Vec<serde_json::Value>,
     /// From address.
     pub from: String,
@@ -87,6 +87,44 @@ pub struct Receipt {
     pub r#type: String,
     /// Effective gas price.
     pub effective_gas_price: String,
+}
+
+// ─── Stored Log ─────────────────────────────────────────────────────────────
+
+/// An EVM log entry, stored for `eth_getLogs` and embedded in receipts.
+///
+/// Serialized fields follow the standard `eth_getLogs` response shape; the
+/// `*_raw` fields are kept unserialized for filtering.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredLog {
+    /// Emitting contract address.
+    pub address: String,
+    /// Log topics (0-4 entries of 32 bytes).
+    pub topics: Vec<String>,
+    /// ABI-encoded log data.
+    pub data: String,
+    /// Block number this log was emitted in.
+    pub block_number: String,
+    /// Hash of the emitting transaction.
+    pub transaction_hash: String,
+    /// Index of the transaction in its block (always 0 for instant-mine).
+    pub transaction_index: String,
+    /// Block hash.
+    pub block_hash: String,
+    /// Index of this log within the block.
+    pub log_index: String,
+    /// Always `false` (no reorgs on an instant-mine node).
+    pub removed: bool,
+    /// Raw block number for range filtering.
+    #[serde(skip)]
+    pub block_number_raw: u64,
+    /// Raw emitting address for filtering.
+    #[serde(skip)]
+    pub address_raw: [u8; 20],
+    /// Raw topics for filtering.
+    #[serde(skip)]
+    pub topics_raw: Vec<[u8; 32]>,
 }
 
 // ─── Stored Tx ──────────────────────────────────────────────────────────────
@@ -133,6 +171,9 @@ struct NodeState {
     transactions: HashMap<B256, StoredTx>,
     /// Block hash by block number.
     block_hashes: HashMap<u64, B256>,
+    /// All emitted logs in chain order (blocks are single-tx, so this is
+    /// also block order).
+    logs: Vec<StoredLog>,
 }
 
 impl std::fmt::Debug for NodeState {
@@ -169,6 +210,7 @@ impl NodeState {
             receipts: HashMap::new(),
             transactions: HashMap::new(),
             block_hashes: HashMap::new(),
+            logs: Vec::new(),
         }
     }
 }
@@ -453,16 +495,16 @@ impl SuwappuNode {
         state.db = std::mem::take(evm.ctx().db_mut());
 
         // ── Map execution result to receipt ─────────────────────────────────
-        let (status, gas_used, contract_addr) = match exec_result {
-            Ok(ExecutionResult::Success { gas_used, output, .. }) => {
+        let (status, gas_used, contract_addr, evm_logs) = match exec_result {
+            Ok(ExecutionResult::Success { gas_used, output, logs, .. }) => {
                 let caddr = match output {
                     Output::Create(_, Some(a)) => Some(a),
                     _ => None,
                 };
-                (1u8, gas_used, caddr)
+                (1u8, gas_used, caddr, logs)
             }
-            Ok(ExecutionResult::Revert { gas_used, .. }) => (0u8, gas_used, None),
-            Ok(ExecutionResult::Halt { gas_used, .. }) => (0u8, gas_used, None),
+            Ok(ExecutionResult::Revert { gas_used, .. }) => (0u8, gas_used, None, vec![]),
+            Ok(ExecutionResult::Halt { gas_used, .. }) => (0u8, gas_used, None, vec![]),
             Err(e) => {
                 // Validation error (nonce mismatch, insufficient balance, etc.) —
                 // DB was already restored above, return an RPC error.
@@ -476,6 +518,34 @@ impl SuwappuNode {
 
         let contract_addr_hex = contract_addr.map(|a| format!("0x{}", hex::encode(a.as_slice())));
 
+        // Convert EVM logs to stored logs (log_index counts within the block;
+        // one tx per block, so it equals the index within this tx).
+        let stored_logs: Vec<StoredLog> = evm_logs
+            .iter()
+            .enumerate()
+            .map(|(i, log)| StoredLog {
+                address: format!("0x{}", hex::encode(log.address.as_slice())),
+                topics: log
+                    .topics()
+                    .iter()
+                    .map(|t| format!("0x{}", hex::encode(t.as_slice())))
+                    .collect(),
+                data: format!("0x{}", hex::encode(log.data.data.as_ref())),
+                block_number: format!("0x{block_number:x}"),
+                transaction_hash: format!("0x{}", hex::encode(tx_hash)),
+                transaction_index: "0x0".to_string(),
+                block_hash: format!("0x{}", hex::encode(block_hash)),
+                log_index: format!("0x{i:x}"),
+                removed: false,
+                block_number_raw: block_number,
+                address_raw: log.address.into_array(),
+                topics_raw: log.topics().iter().map(|t| t.0).collect(),
+            })
+            .collect();
+
+        let receipt_logs: Vec<serde_json::Value> =
+            stored_logs.iter().map(|l| serde_json::to_value(l).expect("log serializes")).collect();
+
         let receipt = Receipt {
             status: format!("0x{status:x}"),
             gas_used: format!("0x{gas_used:x}"),
@@ -484,7 +554,7 @@ impl SuwappuNode {
             transaction_hash: format!("0x{}", hex::encode(tx_hash)),
             transaction_index: "0x0".to_string(),
             block_hash: format!("0x{}", hex::encode(block_hash)),
-            logs: vec![],
+            logs: receipt_logs,
             from: format!("0x{}", hex::encode(sender_alloy.as_slice())),
             to: to_addr.map(|a| format!("0x{}", hex::encode(a.as_slice()))),
             cumulative_gas_used: format!("0x{gas_used:x}"),
@@ -512,8 +582,67 @@ impl SuwappuNode {
         state.receipts.insert(tx_hash, receipt);
         state.transactions.insert(tx_hash, stored_tx);
         state.block_hashes.insert(block_number, block_hash);
+        state.logs.extend(stored_logs);
 
         Ok(tx_hash)
+    }
+
+    /// Return logs matching the given filter, in chain order.
+    ///
+    /// Standard `eth_getLogs` semantics:
+    /// - `block_hash`, when set, overrides the block range (exact block only;
+    ///   unknown hash matches nothing).
+    /// - `addresses` empty = any address; otherwise the log's address must be
+    ///   in the set.
+    /// - `topics` are positional: `None` at position i is a wildcard; a
+    ///   non-empty list means "any of these values at position i". A log with
+    ///   fewer topics than the filter has positions does not match.
+    pub fn get_logs(
+        &self,
+        from_block: u64,
+        to_block: u64,
+        block_hash: Option<B256>,
+        addresses: &[Address],
+        topics: &[Option<Vec<B256>>],
+    ) -> Vec<StoredLog> {
+        let state = self.state.lock().unwrap();
+
+        let range = match block_hash {
+            Some(h) => match state.block_hashes.iter().find(|(_, bh)| **bh == h).map(|(n, _)| *n) {
+                Some(n) => (n, n),
+                None => return vec![],
+            },
+            None => (from_block, to_block),
+        };
+
+        state
+            .logs
+            .iter()
+            .filter(|log| {
+                if log.block_number_raw < range.0 || log.block_number_raw > range.1 {
+                    return false;
+                }
+                if !addresses.is_empty()
+                    && !addresses.iter().any(|a| a.as_slice() == log.address_raw)
+                {
+                    return false;
+                }
+                for (i, filter) in topics.iter().enumerate() {
+                    if let Some(wanted) = filter {
+                        match log.topics_raw.get(i) {
+                            Some(t) => {
+                                if !wanted.iter().any(|w| w.as_slice() == t) {
+                                    return false;
+                                }
+                            }
+                            None => return false,
+                        }
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect()
     }
 
     /// Retrieve a receipt by tx hash.

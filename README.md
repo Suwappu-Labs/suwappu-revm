@@ -214,7 +214,7 @@ validator-quorum side-attestations:
    over `BLAKE3(HEADER_DOMAIN || networkId || oracle || blockNumber || stateRoot)`.
 2. An off-chain relayer (liveness-trusted, cannot forge) collects attestations
    until it holds a set whose stake exceeds the on-chain **>2/3** threshold.
-3. The relayer calls `GsxDagQuorumHeaderOracle.submitHeader`, which uses
+3. The relayer calls `SuwappuDagQuorumHeaderOracle.submitHeader`, which uses
    `0x0102` to recompute the digest and `0x0101` to verify each ML-DSA-65
    signature. Signers whose stake collectively exceed the threshold finalize
    the header; otherwise the call reverts with `BelowQuorum`.
@@ -239,7 +239,7 @@ and hash-based PQ proof (in research, no deployed implementation).
 `crates/suwappu-revm/tests/pq_header_oracle_e2e.rs` is the load-bearing proof
 that this path is real and non-vacuous:
 
-- Deploys real `GsxDagValidatorRegistry` + `GsxDagQuorumHeaderOracle` Solidity
+- Deploys real `SuwappuDagValidatorRegistry` + `SuwappuDagQuorumHeaderOracle` Solidity
   contracts inside `suwappu-revm`.
 - Generates real ML-DSA-65 keypairs, signs a real 148-byte header digest.
 - Submits 3-of-4 honest signatures (300 stake >= 267 threshold): `submitHeader`
@@ -258,7 +258,7 @@ off-chain BLAKE3. If either precompile were missing or empty, every
 
 ```mermaid
 flowchart LR
-    Relayer["Off-chain relayer\n(liveness-trusted,\ncannot forge)"] --> Oracle["GsxDagQuorumHeaderOracle\nsubmitHeader(blockNumber,\nstateRoot, epoch,\npubkeys[], sigs[])"]
+    Relayer["Off-chain relayer\n(liveness-trusted,\ncannot forge)"] --> Oracle["SuwappuDagQuorumHeaderOracle\nsubmitHeader(blockNumber,\nstateRoot, epoch,\npubkeys[], sigs[])"]
     Oracle --> B3["0x0102 BLAKE3\nrecompute 148-byte preimage\n-> 32-byte digest"]
     B3 --> MLDSA["0x0101 ML-DSA-65\nverify each sig\n(FIPS 204, native)"]
     MLDSA --> Quorum{">2/3 stake\nverified?"}

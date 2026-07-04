@@ -1,7 +1,7 @@
 //! Real post-quantum, end-to-end header-oracle finalization test.
 //!
 //! This is the ONE configuration that is BOTH trust-minimized AND
-//! post-quantum: the `GsxDagQuorumHeaderOracle` + `GsxDagValidatorRegistry`
+//! post-quantum: the `SuwappuDagQuorumHeaderOracle` + `SuwappuDagValidatorRegistry`
 //! Solidity contracts run inside `suwappu-revm` (the Monad fork), and the
 //! validator-quorum attestation is verified with **real ML-DSA-65 (FIPS 204)
 //! signatures** via the **native 0x0101 precompile** and the header digest is
@@ -29,14 +29,13 @@
 //! ## Bytecode provenance
 //!
 //! The creation bytecode in `tests/fixtures/*.creation.hex` is the Foundry
-//! `bytecode.object` of the real constructors, regenerated with:
-//!
-//! ```sh
-//! cd ~/suwappu-workspace/repos/suwappu-lattice-protocol/contracts && forge build
-//! # then, from contracts/out/<Name>.sol/<Name>.json, take .bytecode.object
-//! # (strip the 0x prefix) into
-//! # suwappu-revm/crates/suwappu-revm/tests/fixtures/<Name>.creation.hex
-//! ```
+//! `bytecode.object` of `SuwappuDagValidatorRegistry.sol` /
+//! `SuwappuDagQuorumHeaderOracle.sol` (the Suwappu-branded rename of the
+//! former `GsxDagValidatorRegistry` / `GsxDagQuorumHeaderOracle` contracts,
+//! with the domain tag updated to `SUWAPPU_DAG_HEADER_V1`), regenerated with
+//! `forge build` and, from `out/<Name>.sol/<Name>.json`, taking
+//! `.bytecode.object` (0x prefix stripped) into
+//! `suwappu-revm/crates/suwappu-revm/tests/fixtures/<Name>.creation.hex`.
 //!
 //! We deploy via CREATE transactions that run the real constructors (NOT
 //! etched runtime code), because `networkId` is a constructor-set immutable;
@@ -53,7 +52,9 @@
 //! and pulls `suwappu-crypto`, dragging the whole suwappu-dag workspace into this
 //! crate's build. The inline layout is self-validating: a wrong digest makes
 //! the real ML-DSA verify fail, so the ACCEPT-FINALIZES anchor would not
-//! finalize. `HEADER_DOMAIN` is the hard-pinned `keccak256("SUWAPPU_GSXDAG_HEADER_V1")`.
+//! finalize. `HEADER_DOMAIN` is the hard-pinned `keccak256("SUWAPPU_DAG_HEADER_V1")`,
+//! matching the same-named constant in `suwappu-dag`'s Rust
+//! `bridge_header` module.
 
 use alloy_sol_types::{sol, SolCall, SolError, SolValue};
 use pqcrypto_mldsa::mldsa65;
@@ -99,18 +100,20 @@ sol! {
     error BelowQuorum(uint256 sigStake, uint256 needed);
 }
 
-const REGISTRY_CREATION_HEX: &str = include_str!("fixtures/GsxDagValidatorRegistry.creation.hex");
-const ORACLE_CREATION_HEX: &str = include_str!("fixtures/GsxDagQuorumHeaderOracle.creation.hex");
+const REGISTRY_CREATION_HEX: &str =
+    include_str!("fixtures/SuwappuDagValidatorRegistry.creation.hex");
+const ORACLE_CREATION_HEX: &str =
+    include_str!("fixtures/SuwappuDagQuorumHeaderOracle.creation.hex");
 
-// `keccak256("SUWAPPU_GSXDAG_HEADER_V1")`. Verified equal to the live keccak
+// `keccak256("SUWAPPU_DAG_HEADER_V1")`. Verified equal to the live keccak
 // of the ASCII string in `header_domain_is_keccak` below, and matches the
-// Solidity constant `GsxDagQuorumHeaderOracle.HEADER_DOMAIN`.
+// Solidity constant `SuwappuDagQuorumHeaderOracle.HEADER_DOMAIN`.
 const HEADER_DOMAIN: [u8; 32] = [
-    0xc7, 0x0c, 0x21, 0xeb, 0xc7, 0x9f, 0x8a, 0x20, 0x43, 0x34, 0x57, 0xa7, 0x0c, 0xf2, 0x98, 0x5f,
-    0x05, 0xe7, 0x0b, 0x01, 0x7c, 0xbd, 0x95, 0xf3, 0x28, 0xe3, 0xb2, 0xa8, 0x72, 0x1e, 0xbd, 0x3a,
+    0x7b, 0xea, 0x45, 0x3e, 0xa9, 0xa9, 0x2b, 0xb4, 0x6a, 0x6a, 0x6e, 0xcb, 0xcb, 0xa6, 0x70, 0xfd,
+    0x52, 0xd3, 0x84, 0x88, 0x65, 0x7c, 0x9a, 0x93, 0x73, 0x78, 0x6e, 0xcb, 0x2b, 0x5c, 0x35, 0xf0,
 ];
 
-const NETWORK_ID: u64 = 0x6753_7844_4147; // arbitrary nonzero "gsxDAG" id
+const NETWORK_ID: u64 = 0x6753_7844_4147; // arbitrary nonzero id (retained across the rebrand)
 const DEPLOYER: Address = Address::new([0x11; 20]);
 const GAS_LIMIT: u64 = 25_000_000;
 
@@ -239,8 +242,8 @@ fn setup(n: usize) -> (Harness, Address, Vec<Validator>) {
     // Registry(admin = DEPLOYER, networkId). DEPLOYER must be admin to bootstrap.
     let registry =
         h.deploy(REGISTRY_CREATION_HEX, (DEPLOYER, U256::from(NETWORK_ID)).abi_encode_params());
-    // Oracle(registry, gsxDagChainId = NETWORK_ID). headerStateRoot keys on
-    // gsxDagChainId; the digest uses registry.networkId(); keep them equal.
+    // Oracle(registry, chainId = NETWORK_ID). headerStateRoot keys on
+    // chainId; the digest uses registry.networkId(); keep them equal.
     let oracle =
         h.deploy(ORACLE_CREATION_HEX, (registry, U256::from(NETWORK_ID)).abi_encode_params());
 
@@ -473,8 +476,8 @@ fn sub_quorum_reverts_below_quorum() {
 }
 
 /// Guard: the hard-pinned `HEADER_DOMAIN` literal is exactly
-/// `keccak256("SUWAPPU_GSXDAG_HEADER_V1")` (the Solidity constant).
+/// `keccak256("SUWAPPU_DAG_HEADER_V1")` (the Solidity constant).
 #[test]
 fn header_domain_is_keccak() {
-    assert_eq!(keccak256(b"SUWAPPU_GSXDAG_HEADER_V1").as_slice(), &HEADER_DOMAIN);
+    assert_eq!(keccak256(b"SUWAPPU_DAG_HEADER_V1").as_slice(), &HEADER_DOMAIN);
 }

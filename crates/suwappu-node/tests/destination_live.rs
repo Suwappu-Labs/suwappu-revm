@@ -57,19 +57,19 @@ const GAS_LIMIT: u64 = 25_000_000;
 
 /// `networkId` used for the registry + oracle + digest.  Must be consistent
 /// across all three (registry constructor, oracle constructor, header digest).
-const NETWORK_ID: u64 = 0x6753_7844_4147; // "gsxDAG" in big-endian
+const NETWORK_ID: u64 = 0x6753_7844_4147; // arbitrary nonzero id (retained across the rebrand)
 
-/// `keccak256("SUWAPPU_GSXDAG_HEADER_V1")` — must match the Solidity constant.
+/// `keccak256("SUWAPPU_DAG_HEADER_V1")` — must match the Solidity constant.
 const HEADER_DOMAIN: [u8; 32] = [
-    0xc7, 0x0c, 0x21, 0xeb, 0xc7, 0x9f, 0x8a, 0x20, 0x43, 0x34, 0x57, 0xa7, 0x0c, 0xf2, 0x98, 0x5f,
-    0x05, 0xe7, 0x0b, 0x01, 0x7c, 0xbd, 0x95, 0xf3, 0x28, 0xe3, 0xb2, 0xa8, 0x72, 0x1e, 0xbd, 0x3a,
+    0x7b, 0xea, 0x45, 0x3e, 0xa9, 0xa9, 0x2b, 0xb4, 0x6a, 0x6a, 0x6e, 0xcb, 0xcb, 0xa6, 0x70, 0xfd,
+    0x52, 0xd3, 0x84, 0x88, 0x65, 0x7c, 0x9a, 0x93, 0x73, 0x78, 0x6e, 0xcb, 0x2b, 0x5c, 0x35, 0xf0,
 ];
 
 // Creation bytecode shared with the in-process e2e test.
 const REGISTRY_CREATION_HEX: &str =
-    include_str!("../../suwappu-revm/tests/fixtures/GsxDagValidatorRegistry.creation.hex");
+    include_str!("../../suwappu-revm/tests/fixtures/SuwappuDagValidatorRegistry.creation.hex");
 const ORACLE_CREATION_HEX: &str =
-    include_str!("../../suwappu-revm/tests/fixtures/GsxDagQuorumHeaderOracle.creation.hex");
+    include_str!("../../suwappu-revm/tests/fixtures/SuwappuDagQuorumHeaderOracle.creation.hex");
 
 // ── ABI (identical to the in-process e2e) ────────────────────────────────────
 
@@ -279,7 +279,7 @@ async fn destination_live() {
     //           3=accept submitHeader, 4=sub-quorum submitHeader.
     let mut nonce = 0u64;
 
-    // ── 1. Deploy GsxDagValidatorRegistry ───────────────────────────────────
+    // ── 1. Deploy SuwappuDagValidatorRegistry ───────────────────────────────
     // Constructor: (address admin, uint256 networkId)
     // admin MUST be account 0 (the tx signer); otherwise bootstrapEpoch0 reverts.
     let mut registry_ctor = hex_to_bytes(REGISTRY_CREATION_HEX);
@@ -302,9 +302,9 @@ async fn destination_live() {
     let net = U256::abi_decode(&net_raw).expect("decode networkId");
     assert_eq!(net, U256::from(NETWORK_ID), "constructor-set networkId mismatch");
 
-    // ── 2. Deploy GsxDagQuorumHeaderOracle ──────────────────────────────────
-    // Constructor: (address registry, uint256 gsxDagChainId)
-    // gsxDagChainId == NETWORK_ID so headerStateRoot keys consistently.
+    // ── 2. Deploy SuwappuDagQuorumHeaderOracle ──────────────────────────────
+    // Constructor: (address registry, uint256 chainId)
+    // chainId == NETWORK_ID so headerStateRoot keys consistently.
     let mut oracle_ctor = hex_to_bytes(ORACLE_CREATION_HEX);
     let oracle_args = (registry, U256::from(NETWORK_ID)).abi_encode_params();
     oracle_ctor.extend_from_slice(&oracle_args);

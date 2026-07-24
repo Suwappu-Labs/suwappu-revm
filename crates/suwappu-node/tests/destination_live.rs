@@ -75,7 +75,9 @@ const ORACLE_CREATION_HEX: &str =
 
 sol! {
     interface IRegistry {
-        function bootstrapEpoch0(bytes32[] pkHashes, uint256[] stakes) external;
+        function proposeEpochTransition(uint256 epoch, bytes32[] pkHashes, uint256[] stakes)
+            external returns (bytes32);
+        function executeEpochTransition(bytes32 proposalId) external;
         function networkId() external view returns (uint256);
         function quorumThreshold(uint256 epoch) external view returns (uint256);
     }
@@ -275,15 +277,28 @@ async fn destination_live() {
 
     // ── Nonce tracking (eth_getTransactionCount) ─────────────────────────────
     // We track nonces manually to avoid extra RPC round-trips.
-    // Sequence: 0=registry deploy, 1=oracle deploy, 2=bootstrapEpoch0,
-    //           3=accept submitHeader, 4=sub-quorum submitHeader.
+    // Sequence: 0=registry deploy, 1=oracle deploy, 2=proposeEpochTransition,
+    //           3=executeEpochTransition, 4=accept submitHeader,
+    //           5=sub-quorum submitHeader.
     let mut nonce = 0u64;
 
     // ── 1. Deploy SuwappuDagValidatorRegistry ───────────────────────────────
-    // Constructor: (address admin, uint256 networkId)
-    // admin MUST be account 0 (the tx signer); otherwise bootstrapEpoch0 reverts.
+    // Constructor: (address[] signers, uint256 threshold, uint256 networkId,
+    // uint256 timelockDelay). account0 MUST be a signer; otherwise
+    // proposeEpochTransition/approveEpochTransition revert NotSigner.
+    //
+    // timelockDelay = 0 here: this test's `SuwappuNode` harness has no block-
+    // timestamp progression (every block executes at timestamp 0 — see
+    // `node.rs`), so a nonzero delay could never elapse over this RPC path.
+    // The timelock's actual enforcement (execute-too-early reverts, execute
+    // succeeds once elapsed) is proven by the in-process
+    // `pq_header_oracle_e2e.rs` harness instead, which has full
+    // `block.timestamp` control via `Harness::warp`. This test's job is
+    // proving the propose/execute flow works end-to-end over real
+    // `eth_sendRawTransaction`/`eth_call`, not re-proving timelock semantics.
     let mut registry_ctor = hex_to_bytes(REGISTRY_CREATION_HEX);
-    let ctor_args = (account0, U256::from(NETWORK_ID)).abi_encode_params();
+    let ctor_args =
+        (vec![account0], U256::from(1u64), U256::from(NETWORK_ID), U256::ZERO).abi_encode_params();
     registry_ctor.extend_from_slice(&ctor_args);
 
     let raw = sign_eip1559(ACCOUNT_0_PRIVKEY_HEX, CHAIN_ID, nonce, None, registry_ctor, GAS_LIMIT);
@@ -327,20 +342,69 @@ async fn destination_live() {
         validators.iter().map(|v| alloy_primitives::FixedBytes::from(v.pk_hash())).collect();
     let stakes: Vec<U256> = vec![U256::from(100u64); 4]; // equal stake: total=400, quorum=267
 
-    // ── 4. bootstrapEpoch0 ───────────────────────────────────────────────────
-    let bootstrap_data =
-        IRegistry::bootstrapEpoch0Call { pkHashes: pk_hashes, stakes }.abi_encode();
+    // ── 4. proposeEpochTransition(epoch=0, ...) ─────────────────────────────
+    // account0 is the sole signer (threshold=1), so this single call also
+    // reaches quorum and starts the (zero-length, see constructor comment
+    // above) timelock.
+    let propose_data = IRegistry::proposeEpochTransitionCall {
+        epoch: U256::ZERO,
+        pkHashes: pk_hashes.clone(),
+        stakes: stakes.clone(),
+    }
+    .abi_encode();
+
+    // Read the real proposalId via `eth_call` simulation of the exact same
+    // call *before* sending it for real — this returns the contract's own
+    // `keccak256(abi.encode(...))` computation directly, sidestepping any
+    // off-chain re-derivation entirely (and this harness's
+    // `eth_getTransactionReceipt` always returns `logs: []`, so reading it
+    // back from `ProposalCreated` isn't an option either — see `node.rs`'s
+    // hardcoded `logs: vec![]`). `from` must be set: proposeEpochTransition
+    // has an onlySigner check, so the simulation authenticates as account0,
+    // same as the real tx that follows.
+    let sim = rpc_call(
+        port,
+        "eth_call",
+        serde_json::json!([{
+            "from": format!("{account0:#x}"),
+            "to": format!("{registry:#x}"),
+            "data": format!("0x{}", hex::encode(&propose_data)),
+        }, "latest"]),
+    )
+    .await;
+    assert!(sim.get("error").is_none(), "eth_call simulation of proposeEpochTransition must succeed: {sim:?}");
+    let sim_hex = sim["result"].as_str().expect("eth_call result");
+    let sim_bytes = hex::decode(sim_hex.strip_prefix("0x").unwrap_or(sim_hex)).expect("valid hex");
+    let proposal_id: alloy_primitives::B256 =
+        alloy_primitives::B256::abi_decode(&sim_bytes).expect("decode proposalId");
+
     let raw = sign_eip1559(
         ACCOUNT_0_PRIVKEY_HEX,
         CHAIN_ID,
         nonce,
         Some(registry),
-        bootstrap_data,
+        propose_data,
         GAS_LIMIT,
     );
     let tx_hash = send_tx(port, &raw).await;
     let receipt = get_receipt(port, &tx_hash).await;
-    assert_eq!(receipt["status"], "0x1", "bootstrapEpoch0 must succeed: {receipt:?}");
+    assert_eq!(receipt["status"], "0x1", "proposeEpochTransition must succeed: {receipt:?}");
+    nonce += 1;
+
+    // ── 5. executeEpochTransition ────────────────────────────────────────────
+    let execute_data =
+        IRegistry::executeEpochTransitionCall { proposalId: proposal_id }.abi_encode();
+    let raw = sign_eip1559(
+        ACCOUNT_0_PRIVKEY_HEX,
+        CHAIN_ID,
+        nonce,
+        Some(registry),
+        execute_data,
+        GAS_LIMIT,
+    );
+    let tx_hash = send_tx(port, &raw).await;
+    let receipt = get_receipt(port, &tx_hash).await;
+    assert_eq!(receipt["status"], "0x1", "executeEpochTransition must succeed: {receipt:?}");
     nonce += 1;
 
     // Verify quorum threshold: floor(400*2/3)+1 = 267.

@@ -78,7 +78,9 @@ use suwappu_revm::{
 // ── ABI: only what the triad exercises ──────────────────────────────────────
 sol! {
     interface IRegistry {
-        function bootstrapEpoch0(bytes32[] pkHashes, uint256[] stakes) external;
+        function proposeEpochTransition(uint256 epoch, bytes32[] pkHashes, uint256[] stakes)
+            external returns (bytes32);
+        function executeEpochTransition(bytes32 proposalId) external;
         function currentEpoch() external view returns (uint256);
         function quorumThreshold(uint256 epoch) external view returns (uint256);
         function networkId() external view returns (uint256);
@@ -122,6 +124,10 @@ const GAS_LIMIT: u64 = 25_000_000;
 struct Harness {
     db: InMemoryDB,
     nonce: u64,
+    /// Simulated `block.timestamp`, advanced only by `warp()`. Lets tests
+    /// exercise the registry's timelock (readyAt = approval time + delay)
+    /// without a real wall-clock wait.
+    timestamp: u64,
 }
 
 impl Harness {
@@ -145,7 +151,14 @@ impl Harness {
             DEPLOYER,
             AccountInfo { balance: U256::from(u128::MAX), ..Default::default() },
         );
-        Self { db, nonce: 0 }
+        Self { db, nonce: 0, timestamp: 1 }
+    }
+
+    /// Advance the simulated `block.timestamp` by `secs`. Used to cross the
+    /// registry's timelock delay between a proposal reaching quorum and it
+    /// becoming executable.
+    fn warp(&mut self, secs: u64) {
+        self.timestamp += secs;
     }
 
     /// Run one tx against a fresh EVM (built with `MonadPrecompiles`), commit
@@ -157,6 +170,7 @@ impl Harness {
         let ctx = monad_context_with_db(std::mem::take(&mut self.db));
         let mut evm = ctx.build_monad();
         evm.ctx().block.basefee = 0; // no base fee; deployer pays gas_limit * 0
+        evm.ctx().block.timestamp = U256::from(self.timestamp);
 
         let tx = TxEnv::builder()
             .caller(DEPLOYER)
@@ -233,15 +247,30 @@ impl Validator {
     }
 }
 
-/// Deploy registry + oracle, bootstrap epoch 0 with `n` equal-stake real
-/// validators, and return (harness, oracle_addr, validators) sorted by
-/// keccak256(pubkey) ascending (the contract's strictly-increasing dedup order).
+/// Timelock delay (seconds) used by the registry deployed in `setup()`. Real
+/// deployments would use something much longer (hours/days); tests just need
+/// a nonzero delay to prove the timelock is enforced, then `Harness::warp`
+/// past it.
+const TEST_TIMELOCK_DELAY: u64 = 100;
+
+/// Deploy registry + oracle, finalize epoch 0 (via the registry's
+/// propose -> quorum -> timelock -> execute flow, a single DEPLOYER signer
+/// with threshold=1) with `n` equal-stake real validators, and return
+/// (harness, oracle_addr, validators) sorted by keccak256(pubkey) ascending
+/// (the contract's strictly-increasing dedup order).
 fn setup(n: usize) -> (Harness, Address, Vec<Validator>) {
     let mut h = Harness::new();
 
-    // Registry(admin = DEPLOYER, networkId). DEPLOYER must be admin to bootstrap.
-    let registry =
-        h.deploy(REGISTRY_CREATION_HEX, (DEPLOYER, U256::from(NETWORK_ID)).abi_encode_params());
+    // Registry(signers = [DEPLOYER], threshold = 1, networkId, timelockDelay).
+    // A 1-of-1 signer set still exercises the full propose/quorum/timelock/
+    // execute path — the load-bearing behavior under test is the sequencing,
+    // not multi-party approval (that's covered by unit-level reasoning over
+    // the contract; a second signer adds no additional signal here).
+    let registry = h.deploy(
+        REGISTRY_CREATION_HEX,
+        (vec![DEPLOYER], U256::from(1u64), U256::from(NETWORK_ID), U256::from(TEST_TIMELOCK_DELAY))
+            .abi_encode_params(),
+    );
     // Oracle(registry, chainId = NETWORK_ID). headerStateRoot keys on
     // chainId; the digest uses registry.networkId(); keep them equal.
     let oracle =
@@ -259,11 +288,36 @@ fn setup(n: usize) -> (Harness, Address, Vec<Validator>) {
     let pk_hashes: Vec<B256> = validators.iter().map(|v| v.pk_hash()).collect();
     let stakes: Vec<U256> = vec![U256::from(100u64); n]; // equal stake
 
+    // Propose epoch 0. The proposer (DEPLOYER, the sole signer) is
+    // auto-approved, hits threshold=1 immediately, and the timelock starts.
     let res = h.call(
         registry,
-        IRegistry::bootstrapEpoch0Call { pkHashes: pk_hashes, stakes }.abi_encode(),
+        IRegistry::proposeEpochTransitionCall {
+            epoch: U256::ZERO,
+            pkHashes: pk_hashes,
+            stakes,
+        }
+        .abi_encode(),
     );
-    assert!(res.is_success(), "bootstrapEpoch0 must succeed: {res:?}");
+    assert!(res.is_success(), "proposeEpochTransition must succeed: {res:?}");
+    let proposal_id =
+        B256::abi_decode(res.output().expect("proposeEpochTransition output"))
+            .expect("decode proposalId");
+
+    // Executing before the timelock elapses must revert.
+    let too_early = h.call(
+        registry,
+        IRegistry::executeEpochTransitionCall { proposalId: proposal_id }.abi_encode(),
+    );
+    assert!(!too_early.is_success(), "execute before timelock elapses must revert: {too_early:?}");
+
+    // Cross the timelock, then execute for real.
+    h.warp(TEST_TIMELOCK_DELAY);
+    let res = h.call(
+        registry,
+        IRegistry::executeEpochTransitionCall { proposalId: proposal_id }.abi_encode(),
+    );
+    assert!(res.is_success(), "executeEpochTransition must succeed after timelock: {res:?}");
 
     // Quorum threshold = floor(totalStake*2/3)+1. 4×100=400 -> 267. 3×100=300 ≥ 267.
     let r = h.call(registry, IRegistry::quorumThresholdCall { epoch: U256::ZERO }.abi_encode());

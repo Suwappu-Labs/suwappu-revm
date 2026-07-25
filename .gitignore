@@ -15,3 +15,7 @@ Thumbs.db
 
 # internal notes
 .notes
+
+# Foundry build artifacts
+/contracts/out/
+/contracts/cache/
